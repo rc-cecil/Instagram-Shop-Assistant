@@ -15,7 +15,9 @@
     "@netlify/functions": "^5.0.0",
     "@netlify/identity": "^1.0.0",
     "@netlify/vite-plugin": "^3.0.0",
+    "@sparticuz/chromium": "^153.0.0",
     "lucide-react": "^0.468.0",
+    "puppeteer-core": "^25.12.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sharp": "^0.34.0"

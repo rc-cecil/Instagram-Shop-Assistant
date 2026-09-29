@@ -4,7 +4,7 @@
 
 Create or connect a Netlify project for this repository. Use the build command `npm run build` and publish directory `dist`. Select a credit-based Free plan if available. Netlify Database migrations in `netlify/database/migrations` run on deploy. Enable Netlify Identity and set **Registration: Invite only**. Invite the owner email and set `OWNER_EMAIL` to that exact email. Never turn on public registration. Identity sign-in must be tested on a deployed preview because Netlify's local development does not support it.
 
-Copy `.env.example` to a private local `.env` for development or add its values to Netlify environment variables. Add `TOKEN_ENCRYPTION_KEY` as 32 random bytes encoded in 64 hexadecimal characters. Keep Meta, Google, GonkaRouter, and token encryption secrets server-only. Never prefix them with `VITE_`. Do not enter an Instagram password in this app.
+Copy `.env.example` to a private local `.env` for development or add its values to Netlify environment variables. Add `TOKEN_ENCRYPTION_KEY` as 32 random bytes encoded in 64 hexadecimal characters. Keep Meta, GonkaRouter, and token encryption secrets server-only. Never prefix them with `VITE_`. Do not enter an Instagram password in this app.
 
 The invited owner must open the email invitation link and complete **Accept your invitation** by setting a dashboard password. Clicking the email link alone does not finish acceptance. Password recovery links open **Set a new password**. The owner enters and submits passwords themselves; never share them in chat. Keep email confirmation required.
 
@@ -14,13 +14,9 @@ Use a Meta developer app configured for **Instagram Login** and the professional
 
 Sign into the dashboard through Netlify Identity, then use **Settings → Connect Instagram**. The callback rejects any username other than `_testing.account1`. The app encrypts the long-lived access token at rest. Confirm the dashboard shows the connected account and send one test DM. If Meta permissions, app review, webhook subscription, or token refresh is missing, keep automation paused. Renew an expired token through the secure connection flow.
 
-## 3. Google Drive and tracker
+## 3. System tracking
 
-Share only the approved folder `1egAhH0ODEbFm8fKyxpMe1aPEklf2cWhG` and tracker spreadsheet `1Cjp7kBqiDRF77eFO5KzD_XXPH513keAIAtvqbAFp5HQ` with the service account email. Add its JSON credential as the secret `GOOGLE_SERVICE_ACCOUNT_JSON`; do not commit it. The app lists JPG files from that folder only. Import each file to a specific product, review the photo, and approve it. The app appends snapshots to an `App Log` tab with unique sync IDs and leaves the existing tabs intact. Failed sync jobs remain visible under Activity for retry.
-
-The primary shop uses the dedicated `mivelle-shop-assistant` Google Cloud project with the Drive and Sheets APIs enabled. The service account needs no project-wide IAM role because access comes from sharing the approved folder only.
-
-For another Instagram shop, create a separate `shops` record with its own Instagram username, Drive folder, tracker, payment and delivery policy, and server-only credential environment variable. A separate Google Cloud project is optional. Keep a distinct scoped service account credential for each shop so its Drive records cannot cross into another shop. Every new shop starts with automation disabled.
+The system database is the sole tracker for products, conversations, orders, payment decisions, posts, AI usage, and activity. No Google Drive, Google Sheet, or service-account JSON is required. Upload JPG photos directly in the product library; files stay in Netlify Blobs and their review and posting status stays in the database.
 
 ## 4. GonkaRouter
 
@@ -30,7 +26,7 @@ Create a GonkaRouter key in its dashboard and set `GONKA_API_KEY` on Netlify. Co
 
 Both automation switches are off after deployment. Check the imported historical posts, two known image fingerprints, ten SHEIN links, and order `ORD-20260928-001`. The order remains **Awaiting payment evidence**; no cart task exists for it unless the owner explicitly verifies payment in the dashboard.
 
-Approve one new product photo and caption. Publish one supervised post through Meta, then inspect the Instagram profile and post link. Send a sample DM and continue it through payment evidence, leaving it at **Awaiting owner verification**. Review the post, conversation, tracker, and schedule before enabling automated replies or posting. A real payment decision remains yours; approve or reject that specific order only after checking your MoMo account. Approval then creates a manual cart task.
+Approve one new product photo and caption. Publish one supervised post through Meta, then inspect the Instagram profile and post link. Send a sample DM and continue it through payment evidence, leaving it at **Awaiting owner verification**. Review the post, conversation, system records, and schedule before enabling automated replies or posting. A real payment decision remains yours; approve or reject that specific order only after checking your MoMo account. Approval then creates a manual cart task.
 
 The archived browser conversation ID `IG-114210563301570` is not necessarily Meta's Instagram-scoped sender ID. Reconcile that customer's identity through the official API before enabling automatic replies for that conversation; do not merge by display name alone.
 

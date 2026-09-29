@@ -1,18 +1,18 @@
 import type { Config } from '@netlify/functions'
 import { getStore } from '@netlify/blobs'
 import sharp from 'sharp'
-import { ACCOUNT, FOLDER_URL, PAYMENT_NUMBER, POST_TIMES, TRACKER_URL, normalizeProductId, sellingPrice } from '../../shared/policy'
-import { db, enqueueSync, env, fail, graph, json, log, owner } from './_shared/server'
+import { ACCOUNT, PAYMENT_NUMBER, POST_TIMES, normalizeProductId, sellingPrice } from '../../shared/policy'
+import { db, recordUpdate, env, fail, graph, json, log, owner } from './_shared/server'
 import { assertUniquePhoto, inspectJpg } from './_shared/photos'
-import { checkGoogleAccess, driveFile, driveImages, driveUploadJpg, syncPending } from './_shared/google'
+import { staticDetails, renderedDetails } from './_shared/shein'
 import { postDue } from './_shared/posting'
 
 const respond = (value:unknown) => json(value)
 async function body(req:Request) { try { return await req.json() } catch { throw new Error('Invalid JSON body') } }
 async function snapshot(shopId='mivelle') {
-  const [settings,shops,products,photos,posts,conversations,orders,cart,activity,usage,sync,jobs] = await Promise.all([
+  const [settings,shops,products,photos,posts,conversations,orders,cart,activity,usage,jobs] = await Promise.all([
     db().sql`SELECT key,value FROM settings WHERE key IN ('automation','ai_cap_cents','shop','instagram_connection','launch_review')`,
-    db().sql`SELECT id,name,instagram_username,timezone,payment_number,payment_method,markup_usd,usd_to_ghs,delivery_message,drive_folder_id,tracker_sheet_id,enabled FROM shops ORDER BY created_at`,
+    db().sql`SELECT id,name,instagram_username,timezone,payment_number,payment_method,markup_usd,usd_to_ghs,delivery_message,enabled FROM shops ORDER BY created_at`,
     db().sql`SELECT id,name,source_url,description,shein_usd,sizes,colours,stock_status,approved,excluded,note FROM products ORDER BY id`,
     db().sql`SELECT id,product_id,source_file_id,sha256,phash,status,image_url,approved_caption FROM photos WHERE shop_id=${shopId} ORDER BY created_at DESC`,
     db().sql`SELECT id,photo_id,slot_date,slot_time,caption,status,permalink,error FROM posts WHERE shop_id=${shopId} ORDER BY published_at DESC NULLS LAST LIMIT 80`,
@@ -21,12 +21,11 @@ async function snapshot(shopId='mivelle') {
     db().sql`SELECT c.*,o.product_id,o.size,o.colour,o.quantity,p.source_url FROM cart_tasks c JOIN orders o ON o.id=c.order_id JOIN products p ON p.id=o.product_id WHERE c.shop_id=${shopId} ORDER BY c.created_at DESC`,
     db().sql`SELECT kind,entity_id,detail,created_at FROM activity WHERE shop_id=${shopId} ORDER BY created_at DESC LIMIT 40`,
     db().sql`SELECT COALESCE(SUM(actual_cents),0)::int cents,COALESCE(SUM(estimated_usd),0)::float estimated_usd,COALESCE(SUM(input_tokens),0)::int input_tokens,COALESCE(SUM(output_tokens),0)::int output_tokens FROM ai_usage WHERE shop_id=${shopId} AND created_at >= date_trunc('month',now())`,
-    db().sql`SELECT kind,entity_id,status,error FROM sync_jobs WHERE shop_id=${shopId} AND status!='complete' ORDER BY created_at DESC LIMIT 30`,
     db().sql`SELECT id,conversation_id,status,error,updated_at FROM reply_jobs WHERE shop_id=${shopId} AND status!='complete' ORDER BY updated_at DESC LIMIT 50`
   ])
   const configuration=Object.fromEntries(settings.map(row=>{const s=row as {key:string;value:any};return [s.key,s.key==='instagram_connection'?{connected:true,username:s.value?.username,expiresAt:s.value?.expiresAt}:s.value]}))
   const shop=(shops as any[]).find(item=>item.id===shopId) || shops[0]
-  return {shopId,shops,account:shop?.instagram_username||ACCOUNT,configuration,products,photos,posts,conversations,orders,cart,activity,usage:usage[0],sync,jobs,trackerUrl:shop?`https://docs.google.com/spreadsheets/d/${shop.tracker_sheet_id}/edit`:TRACKER_URL,folderUrl:shop?`https://drive.google.com/drive/folders/${shop.drive_folder_id}`:FOLDER_URL,postTimes:POST_TIMES}
+  return {shopId,shops,account:shop?.instagram_username||ACCOUNT,configuration,products,photos,posts,conversations,orders,cart,activity,usage:usage[0],jobs,postTimes:POST_TIMES}
 }
 async function savePhoto(productId:string, jpg:Buffer, sourceFileId:string|null) {
   const product=await db().sql`SELECT id FROM products WHERE id=${productId}`
@@ -39,34 +38,41 @@ async function savePhoto(productId:string, jpg:Buffer, sourceFileId:string|null)
   return id
 }
 async function importShein(link:string) {
-  const parsed=new URL(link)
-  if (!['m.shein.com','www.shein.com'].includes(parsed.hostname)) throw new Error('Only supplied SHEIN product links are accepted')
-  const productId=normalizeProductId(link)
-  if (!productId) throw new Error('SHEIN product ID not found in URL')
-  const existing=await db().sql`SELECT id FROM products WHERE id=${productId}`
-  if (!existing.length) throw new Error('This SHEIN link is not in the approved product list')
-  const response=await fetch(link,{headers:{'User-Agent':'Mozilla/5.0'}})
-  if (!response.ok) throw new Error(`SHEIN page unavailable (${response.status}); product remains pending review`)
-  const html=await response.text()
-  if (/verify you are human|captcha|risk challenge/i.test(html)) throw new Error('SHEIN requested human verification; product remains pending review')
-  const extract=(field:string)=>html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${field}["'][^>]+content=["']([^"']+)`, 'i'))?.[1]
-  const title=extract('og:title'), image=extract('og:image')
-  if (title) await db().sql`UPDATE products SET description=${title},updated_at=now() WHERE id=${productId}`
-  let photoId:null|string=null
-  if (image && image.startsWith('https://')) {
-    const imageResponse=await fetch(image)
-    if (imageResponse.ok) {
-      const jpg=await sharp(Buffer.from(await imageResponse.arrayBuffer())).jpeg({quality:90}).toBuffer()
-      try {
-        photoId=await savePhoto(productId,jpg,null)
-        try {
-          const fileId=await driveUploadJpg(`shein-${productId}-${photoId}.jpg`,jpg)
-          await db().sql`UPDATE photos SET source_file_id=${fileId} WHERE id=${photoId}`
-        } catch(error) { await log('drive_photo_pending',photoId,String(error)) }
-      } catch { /* duplicate or unsupported image remains for owner review */ }
-    }
+  let parsed:URL
+  try { parsed=new URL(link.trim()) } catch { throw new Error('Enter a valid SHEIN product URL') }
+  if (parsed.protocol!=='https:' || parsed.username || parsed.password || parsed.port || !['m.shein.com','www.shein.com'].includes(parsed.hostname)) throw new Error('Use an HTTPS SHEIN product link from m.shein.com or www.shein.com')
+  const productId=normalizeProductId(parsed.href)
+  if (!productId) throw new Error('Use the full SHEIN product link containing its product ID')
+  const sourceUrl=`${parsed.origin}${parsed.pathname}`
+  await db().sql`INSERT INTO products(id,name,source_url) VALUES (${productId},${`SHEIN product ${productId}`},${sourceUrl}) ON CONFLICT(id) DO NOTHING RETURNING id`
+  let title:string|null=null,photoId:string|null=null,warning:string|null=null
+  try {
+    let details:{title:string|null;image:string|null}={title:null,image:null}
+    try {
+      const response=await fetch(sourceUrl,{headers:{'User-Agent':'Mozilla/5.0'},signal:AbortSignal.timeout(8000)})
+      if (response.ok) details=staticDetails(await response.text())
+    } catch { /* JavaScript rendering below is also used for unavailable static pages. */ }
+    if (!details.image) details=await renderedDetails(parsed.href)
+    title=details.title
+    if (title) await db().sql`UPDATE products SET name=CASE WHEN approved=false THEN ${title} ELSE name END,description=COALESCE(description,${title}),updated_at=now() WHERE id=${productId}`
+    if (!details.image) throw new Error('No product photo was found')
+    const imageResponse=await fetch(details.image,{signal:AbortSignal.timeout(15000)})
+    if (!imageResponse.ok) throw new Error('Product photo could not be downloaded')
+    const bytes=Buffer.from(await imageResponse.arrayBuffer())
+    const metadata=await sharp(bytes).metadata()
+    if (!metadata.width||!metadata.height) throw new Error('Product photo dimensions unavailable')
+    const ratio=metadata.width/metadata.height
+    // Pad tall/wide product images, preserving the whole item for Instagram.
+    const jpg=await sharp(bytes).rotate().resize({width:1080,height:1350,fit:ratio<0.8||ratio>1.91?'contain':'inside',background:'#ffffff'}).jpeg({quality:90}).toBuffer()
+    const fingerprint=await inspectJpg(jpg)
+    const prior=await db().sql`SELECT id FROM photos WHERE product_id=${productId} AND sha256=${fingerprint.sha256} LIMIT 1`
+    photoId=prior.length?String(prior[0].id):await savePhoto(productId,jpg,null)
+
+  } catch(error) {
+    warning=`Product saved. ${error instanceof Error?error.message:'Details could not be downloaded'}. Review the details and upload a JPG in the product library.`
   }
-  return {productId,title:title || null,photoId,reviewRequired:true,priceVerified:false,stockVerified:false}
+  await log('product_imported',productId,warning || 'SHEIN product saved for owner review')
+  return {productId,title,photoId,warning,reviewRequired:true,priceVerified:false,stockVerified:false}
 }
 
 export default async function(req:Request) {
@@ -96,6 +102,11 @@ export default async function(req:Request) {
     }
     if (path==='integration-check') {
       const input=await body(req)
+      if (input.service==='instagram') {
+        const profile=await graph('me?fields=id,username')
+        if (profile.username!==ACCOUNT) return fail('Instagram connection does not match the approved account',409)
+        return respond({service:'instagram',connected:true,username:profile.username})
+      }
       if (input.service==='gonka') {
         const key=env('GONKA_API_KEY')
         if (!key) return fail('GonkaRouter key is not configured',409)
@@ -104,7 +115,10 @@ export default async function(req:Request) {
         const result=await response.json()
         return respond({service:'gonka',connected:true,modelAvailable:Array.isArray(result.data)&&result.data.some((model:{id:string})=>model.id==='MiniMaxAI/MiniMax-M2.7')})
       }
-      if (input.service==='google') return respond({service:'google',connected:true,...await checkGoogleAccess(shopId)})
+      if (input.service==='database') {
+        await db().sql`SELECT 1 FROM products LIMIT 1`
+        return respond({service:'database',connected:true})
+      }
       return fail('Unknown integration')
     }
     if (path==='automation') {
@@ -151,13 +165,6 @@ export default async function(req:Request) {
       const id=await savePhoto(String(form.get('productId')),Buffer.from(await file.arrayBuffer()),null)
       return respond({id})
     }
-    if (path==='drive-import') {
-      const input=await body(req), fileId=String(input.fileId||''),productId=String(input.productId||'')
-      const files=await driveImages()
-      if (!files.some(f=>f.id===fileId)) return fail('File is not in the approved Drive folder',403)
-      return respond({id:await savePhoto(productId,await driveFile(fileId),fileId)})
-    }
-    if (path==='drive-list') return respond({files:await driveImages()})
     if (path==='photo-review') {
       const input=await body(req),id=String(input.id||'')
       if (!['approved','excluded'].includes(input.status)) return fail('Invalid photo status')
@@ -185,7 +192,7 @@ export default async function(req:Request) {
         const result=await graph('{ig}/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipient:{id},message:{text}})})
         await db().sql`UPDATE messages SET meta_id=${result.message_id||null},status='sent' WHERE id=${messageId}`
         await db().sql`UPDATE conversations SET status='active',last_reply_at=now(),updated_at=now() WHERE id=${id}`
-        await enqueueSync('conversation',id)
+        await recordUpdate('conversation',id)
         return respond({ok:true})
       } catch(error) {
         await db().sql`UPDATE messages SET status='uncertain' WHERE id=${messageId}`
@@ -202,7 +209,7 @@ export default async function(req:Request) {
       if (Number(input.agreedAmountGhs)!==amount) return fail('Agreed amount does not match the verified pricing rule')
       const id=`ORD-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`
       await db().sql`INSERT INTO orders(id,conversation_id,product_id,size,colour,quantity,delivery_location,item_total_ghs,agreed_amount_ghs,status) VALUES (${id},${String(input.conversationId)},${String(input.productId)},${String(input.size)},${String(input.colour)},${Number(input.quantity)},${String(input.deliveryLocation)},${amount},${amount},'agreed_waiting_payment')`
-      await enqueueSync('order',id)
+      await recordUpdate('order',id)
       return respond({id,amount,paymentInstruction:`Please send GH₵${amount.toFixed(2)} by MoMo to ${PAYMENT_NUMBER} for order ${id}. Reply with the transaction reference or a screenshot so payment can be checked. Delivery is expected about two weeks from confirmed payment; you will be contacted when your order is ready.`})
     }
     if (path==='payment-evidence') {
@@ -210,7 +217,7 @@ export default async function(req:Request) {
       if (!evidence) return fail('Evidence reference required')
       const updated=await db().sql`UPDATE orders SET payment_evidence=${evidence},status='awaiting_owner_verification' WHERE id=${id} AND status IN ('agreed_waiting_payment','awaiting_payment_evidence') RETURNING id`
       if (!updated.length) return fail('Order is not waiting for payment evidence',409)
-      await enqueueSync('order',id)
+      await recordUpdate('order',id)
       return respond({ok:true})
     }
     if (path==='payment-decision') {
@@ -223,11 +230,10 @@ export default async function(req:Request) {
       } else {
         await db().sql`UPDATE orders SET status='payment_rejected',approved_by=${user.email},approved_at=now() WHERE id=${id} AND status='awaiting_owner_verification'`
       }
-      await enqueueSync('order',id)
+      await recordUpdate('order',id)
       await log('payment_decision',id,`${input.approved===true?'Approved':'Rejected'} by ${user.email}`)
       return respond({ok:true})
     }
-    if (path==='sync') { await syncPending(); return respond({ok:true}) }
     return fail('Not found',404)
   } catch(error) { return fail(error instanceof Error?error.message:'Unexpected error',500) }
 }

@@ -1,9 +1,12 @@
+import sharp from 'sharp'
 import { PGlite } from '@electric-sql/pglite'
 import { readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const state=vi.hoisted(()=>({engine:null as any,graph:vi.fn(),owner:null as any}))
+const state=vi.hoisted(()=>({engine:null as any,graph:vi.fn(),owner:null as any,render:vi.fn(),store:vi.fn()}))
+vi.mock('../netlify/functions/_shared/shein',async original=>({...await original<any>(),renderedDetails:(...args:any[])=>state.render(...args)}))
+vi.mock('@netlify/blobs',()=>({getStore:()=>({set:(...args:any[])=>state.store(...args)})}))
 vi.mock('../netlify/functions/_shared/server',async importOriginal=>({
   ...await importOriginal<any>(),
   db:()=>({sql:async(strings:TemplateStringsArray,...values:any[])=>{
@@ -13,7 +16,7 @@ vi.mock('../netlify/functions/_shared/server',async importOriginal=>({
   env:(key:string)=>({META_APP_SECRET:'secret',META_VERIFY_TOKEN:'verify',GONKA_API_KEY:'key',GONKA_INPUT_USD_PER_MILLION:'0.0021',GONKA_OUTPUT_USD_PER_MILLION:'0.0021'} as Record<string,string>)[key]||'',
   owner:async()=>state.owner,
   log:async(kind:string,entityId:string,detail:string)=>state.engine.query('INSERT INTO activity(id,kind,entity_id,detail) VALUES ($1,$2,$3,$4)',[crypto.randomUUID(),kind,entityId,detail]),
-  enqueueSync:async(kind:string,entityId:string)=>state.engine.query('INSERT INTO sync_jobs(id,kind,entity_id) VALUES ($1,$2,$3)',[crypto.randomUUID(),kind,entityId]),
+  recordUpdate:async(kind:string,entityId:string)=>state.engine.query('INSERT INTO activity(id,kind,entity_id,detail) VALUES ($1,$2,$3,$4)',[crypto.randomUUID(),`${kind}_updated`,entityId,`${kind} record updated in the system`]),
   igCredentials:async()=>({id:'approved-account',token:'test-token'}),
   graph:(...args:any[])=>state.graph(...args)
 }))
@@ -24,14 +27,16 @@ import { processPendingReplies } from '../netlify/functions/_shared/replies'
 
 beforeAll(async()=>{
   state.engine=new PGlite()
-  for(const folder of ['001_initial','004_sync-events','005_photo-captions','007_launch-gate','008_ai-budget','009_conversation-lock']) {
+  for(const folder of ['001_initial','004_sync-events','005_photo-captions','007_launch-gate','008_ai-budget','009_conversation-lock','010_multi_shop','011_system_tracking']) {
     await state.engine.exec(readFileSync(new URL(`../netlify/database/migrations/${folder}/migration.sql`,import.meta.url),'utf8'))
   }
 },30_000)
 beforeEach(async()=>{
   await state.engine.exec(`TRUNCATE products,conversations,webhook_events,reply_jobs,ai_usage,ai_budget_months,activity,sync_jobs CASCADE;
-    UPDATE settings SET value='{"replies":false,"posting":false}' WHERE key='automation';`)
-  state.graph.mockReset();state.owner=null
+    UPDATE settings SET value='{"replies":false,"posting":false}' WHERE key='automation';
+    UPDATE settings SET value='{"approved":false}' WHERE key='launch_review';
+    DELETE FROM settings WHERE key='instagram_connection';`)
+  state.graph.mockReset();state.owner=null;state.render.mockReset();state.render.mockRejectedValue(new Error("SHEIN requires human verification"));state.store.mockReset()
 })
 const q=async(sql:string)=>state.engine.query(sql)
 const event=()=>{
@@ -40,6 +45,89 @@ const event=()=>{
 }
 
 describe('database and external action boundaries',()=>{
+  it('automatically saves a rendered product photo, pads portrait images and reuses it on retry',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    state.render.mockResolvedValue({title:'Grey drawstring pants',image:'https://img.ltwebstatic.com/product.jpg'})
+    const bytes=await sharp({create:{width:600,height:900,channels:3,background:'#737373'}}).jpeg().toBuffer()
+    const network=vi.spyOn(globalThis,'fetch').mockImplementation(async input=>String(input).includes('img.ltwebstatic.com')?new Response(Uint8Array.from(bytes)):new Response('<meta property="og:image" content="https://m.shein.com/logo/192.png">'))
+    try {
+      const request=()=>api(new Request('https://shop.test/api/app/import-shein',{method:'POST',body:JSON.stringify({url:'https://m.shein.com/Pants-p-43328251.html'})}))
+      const result=await (await request()).json()
+      expect(result).toMatchObject({title:'Grey drawstring pants',warning:null,photoId:expect.any(String)})
+      expect((await q('SELECT status,product_id FROM photos')).rows).toEqual([{status:'needs_review',product_id:'43328251'}])
+      expect((await q('SELECT name,approved FROM products')).rows[0]).toEqual({name:'Grey drawstring pants',approved:false})
+      const saved=state.store.mock.calls[0][1]
+      expect(await sharp(Buffer.from(saved)).metadata()).toMatchObject({format:'jpeg',width:1080,height:1350})
+      expect((await (await request()).json()).photoId).toBe(result.photoId)
+      expect(state.store).toHaveBeenCalledTimes(1)
+    } finally {network.mockRestore()}
+  })
+  it('imports a new SHEIN product for review even if SHEIN blocks fetching, without duplicating or approving it',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    const network=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('captcha'))
+    try {
+      const request=()=>api(new Request('https://shop.test/api/app/import-shein',{method:'POST',body:JSON.stringify({url:'https://m.shein.com/New-Shirt-p-999999.html?ref=test'})}))
+      const first=await request()
+      expect(first.status).toBe(200)
+      expect(await first.json()).toMatchObject({productId:'999999',photoId:null,reviewRequired:true,warning:expect.stringContaining('Product saved')})
+      expect((await request()).status).toBe(200)
+      expect((await q('SELECT id,approved,stock_status,shein_usd,source_url FROM products')).rows).toEqual([{id:'999999',approved:false,stock_status:'unverified',shein_usd:null,source_url:'https://m.shein.com/New-Shirt-p-999999.html'}])
+      expect((await q('SELECT count(*)::int n FROM photos')).rows[0].n).toBe(0)
+      const bad=await api(new Request('https://shop.test/api/app/import-shein',{method:'POST',body:JSON.stringify({url:'https://evil.example/New-Shirt-p-1.html'})}))
+      expect(bad.status).toBe(500)
+      expect(network).toHaveBeenCalledTimes(2)
+    } finally {network.mockRestore()}
+  })
+  it('checks the live Instagram identity and rejects a different account',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    const check=()=>api(new Request('https://shop.test/api/app/integration-check',{method:'POST',body:JSON.stringify({service:'instagram'})}))
+    state.graph.mockResolvedValueOnce({id:'approved-account',username:'_testing.account1'})
+    expect(await (await check()).json()).toEqual({service:'instagram',connected:true,username:'_testing.account1'})
+    state.graph.mockResolvedValueOnce({id:'other-account',username:'other'})
+    expect((await check()).status).toBe(409)
+  })
+  it('requires launch review and Instagram connection before enabling both controls',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    const enable=()=>api(new Request('https://shop.test/api/app/automation',{method:'POST',body:JSON.stringify({replies:true,posting:true})}))
+    expect((await enable()).status).toBe(400)
+    await q(`UPDATE settings SET value='{"approved":true}' WHERE key='launch_review'`)
+    expect((await enable()).status).toBe(400)
+    await q(`INSERT INTO settings(key,value) VALUES ('instagram_connection','{"id":"approved-account"}')`)
+    expect((await enable()).status).toBe(200)
+    expect((await q("SELECT value FROM settings WHERE key='automation'")).rows[0].value).toEqual({replies:true,posting:true})
+  })
+  it('tracks an agreed order and evidence internally while leaving payment approval to the owner',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    await state.engine.exec(`INSERT INTO products(id,name,source_url,shein_usd,sizes,colours,stock_status,approved) VALUES ('product','Shirt','https://m.shein.com/item-p-1.html',12.4,'["M"]','["Blue"]','available',true);
+      INSERT INTO conversations(id) VALUES ('test-customer');`)
+    const create=await api(new Request('https://shop.test/api/app/order',{method:'POST',body:JSON.stringify({conversationId:'test-customer',productId:'product',size:'M',colour:'Blue',quantity:2,deliveryLocation:'Test location',agreedAmountGhs:452.4})}))
+    expect(create.status).toBe(200)
+    const order=await create.json()
+    expect(order.amount).toBe(452.4)
+    const evidence=await api(new Request('https://shop.test/api/app/payment-evidence',{method:'POST',body:JSON.stringify({orderId:order.id,evidence:'TEST reference only'})}))
+    expect(evidence.status).toBe(200)
+    expect((await q('SELECT status,approved_by FROM orders')).rows[0]).toEqual({status:'awaiting_owner_verification',approved_by:null})
+    expect((await q('SELECT count(*)::int n FROM cart_tasks')).rows[0].n).toBe(0)
+    expect((await q('SELECT count(*)::int n FROM sync_jobs')).rows[0].n).toBe(0)
+    expect(state.graph).not.toHaveBeenCalled()
+  })
+  it('loads system tracking and checks the database without Google credentials or requests',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    const network=vi.spyOn(globalThis,'fetch')
+    try {
+      const dashboard=await api(new Request('https://shop.test/api/app/dashboard'))
+      expect(dashboard.status).toBe(200)
+      const data=await dashboard.json()
+      expect(data).not.toHaveProperty('trackerUrl')
+      expect(data).not.toHaveProperty('sync')
+      const check=await api(new Request('https://shop.test/api/app/integration-check',{method:'POST',body:JSON.stringify({service:'database'})}))
+      expect(await check.json()).toEqual({service:'database',connected:true})
+      for (const path of ['drive-list','drive-import','sync']) {
+        expect((await api(new Request(`https://shop.test/api/app/${path}`,{method:'POST',body:'{}'}))).status).toBe(404)
+      }
+      expect(network).not.toHaveBeenCalled()
+    } finally { network.mockRestore() }
+  })
   it('persists duplicate webhook deliveries as one message and job',async()=>{
     const background:Promise<unknown>[]=[]
     const context={waitUntil:(p:Promise<unknown>)=>background.push(p)} as any
@@ -79,6 +167,8 @@ describe('database and external action boundaries',()=>{
     expect((await api(request())).status).toBe(400)
     expect((await q('SELECT order_id FROM cart_tasks')).rows).toEqual([{order_id:'ORDER-A'}])
     expect((await q("SELECT status FROM orders WHERE id='ORDER-B'")).rows[0].status).toBe('awaiting_owner_verification')
+    expect((await q('SELECT count(*)::int n FROM sync_jobs')).rows[0].n).toBe(0)
+    expect((await q("SELECT entity_id FROM activity WHERE kind='order_updated'")).rows).toEqual([{entity_id:'ORDER-A'}])
     expect(state.graph).not.toHaveBeenCalled()
   })
   it('stops AI calls at the cap before contacting the provider',async()=>{

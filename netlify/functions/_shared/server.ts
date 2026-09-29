@@ -36,8 +36,8 @@ export async function owner(req?: Request): Promise<{ id: string; email: string 
 export async function log(kind: string, entityId: string, detail: string) {
   await db().sql`INSERT INTO activity(id,kind,entity_id,detail) VALUES (${crypto.randomUUID()},${kind},${entityId},${detail})`
 }
-export async function enqueueSync(kind: string, entityId: string) {
-  await db().sql`INSERT INTO sync_jobs(id,kind,entity_id) VALUES (${crypto.randomUUID()},${kind},${entityId})`
+export async function recordUpdate(kind: string, entityId: string) {
+  await log(`${kind}_updated`, entityId, `${kind} record updated in the system`)
 }
 export function verifyMetaSignature(raw: string, signature: string | null, secret: string): boolean {
   if (!secret || !signature?.startsWith('sha256=')) return false

@@ -1,5 +1,5 @@
 import { PAYMENT_NUMBER, replyAllowed, sellingPrice } from '../../../shared/policy'
-import { db, env, graph, log, enqueueSync } from './server'
+import { db, env, graph, log, recordUpdate } from './server'
 
 type Job = { id: string; inbound_meta_id: string; conversation_id: string }
 type Product = { id: string; name: string; source_url: string; description: string | null; shein_usd: number | null; stock_status: string; sizes: string[]; colours: string[]; approved: boolean }
@@ -21,7 +21,7 @@ async function agreedOrderReply(conversationId:string, incoming:string):Promise<
   if (order.status==='awaiting_customer_agreement' && incoming.trim().toUpperCase()===`CONFIRM ${order.id}`) {
     await db().sql`UPDATE orders SET status='agreed_waiting_payment' WHERE id=${order.id} AND status='awaiting_customer_agreement'`
     await db().sql`UPDATE conversations SET status='waiting_payment' WHERE id=${conversationId}`
-    await enqueueSync('order',order.id)
+    await recordUpdate('order',order.id)
     return `Please send GH₵${Number(order.agreed_amount_ghs).toFixed(2)} by MoMo to ${PAYMENT_NUMBER} for order ${order.id}. Reply with a transaction reference or screenshot for the owner to check. Delivery is expected about two weeks from confirmed payment; you will be contacted when ready.`
   }
   if (order.status==='awaiting_owner_verification') return `Payment evidence for ${order.id} is waiting for the owner's account check. We will update you after verification.`
@@ -36,7 +36,7 @@ async function prepareAgreement(conversationId:string,draft:Draft,products:Produ
   const id=`ORD-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`
   const amount=sellingPrice(Number(product.shein_usd),draft.quantity)
   await db().sql`INSERT INTO orders(id,conversation_id,product_id,size,colour,quantity,delivery_location,item_total_ghs,agreed_amount_ghs,status) VALUES (${id},${conversationId},${product.id},${draft.size},${draft.colour},${draft.quantity},${draft.deliveryLocation.trim()},${amount},${amount},'awaiting_customer_agreement')`
-  await enqueueSync('order',id)
+  await recordUpdate('order',id)
   return `Please confirm ${id}: ${product.name}\n${product.source_url}\nSize: ${draft.size}; colour: ${draft.colour}; quantity: ${draft.quantity}.\nLocation: ${draft.deliveryLocation.trim()}. Item amount: GH₵${amount.toFixed(2)}. Delivery is arranged offline; no delivery charge is included. Expected delivery is about two weeks from confirmed payment. Reply CONFIRM ${id} if these exact details and item amount are agreed.`
 }
 async function aiReply(conversationId: string, incoming: string, products: Product[]): Promise<{reply:string;orderDraft?:Draft}> {
@@ -115,7 +115,7 @@ export async function processPendingReplies(limit = 5) {
         await db().sql`UPDATE messages SET meta_id=${result.message_id || null},status='sent' WHERE id=${outgoingId}`
         await db().sql`UPDATE reply_jobs SET status='complete',updated_at=now() WHERE id=${job.id}`
         await db().sql`UPDATE conversations SET status=CASE WHEN status IN ('waiting_payment','waiting_owner') THEN status ELSE 'active' END,last_reply_at=now(),updated_at=now() WHERE id=${job.conversation_id}`
-        await enqueueSync('conversation',job.conversation_id)
+        await recordUpdate('conversation',job.conversation_id)
       } catch (error) {
         await db().sql`UPDATE messages SET status='uncertain' WHERE id=${outgoingId}`
         await db().sql`UPDATE reply_jobs SET status='uncertain',error=${String(error)},updated_at=now() WHERE id=${job.id}`

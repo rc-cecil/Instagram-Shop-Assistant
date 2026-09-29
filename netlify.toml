@@ -2,6 +2,13 @@
   command = "npm run build"
   publish = "dist"
 
+[functions]
+  external_node_modules = ["sharp", "puppeteer-core", "@sparticuz/chromium"]
+  included_files = ["node_modules/@img/sharp-linux-x64/**", "node_modules/@img/sharp-libvips-linux-x64/**"]
+
+[functions.api]
+  included_files = ["node_modules/@sparticuz/chromium/bin/**"]
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -14,11 +14,11 @@ Use `netlify dev` after linking a Netlify site. Netlify Identity authentication 
 
 ## What the app does
 
-- Maintains products, approved photos, posts, conversations, separate orders, owner payment decisions, manual cart tasks, AI usage, activity, and Sheet sync jobs in durable Postgres tables.
+- Maintains products, approved photos, posts, conversations, separate orders, owner payment decisions, manual cart tasks, AI usage, and activity in durable Postgres tables.
 - Receives Instagram DMs from a signed Meta webhook. Unique message IDs and an outbound send record prevent automatic duplicate replies. If Meta's reply result is uncertain, the record waits for owner review.
 - Uses GonkaRouter for concise replies grounded in approved product records and shop policies. Structured order proposals must match approved variants; the customer must explicitly confirm the server-calculated amount before receiving payment instructions. AI cannot approve payment or complete an order.
 - Publishes only approved, unused photos in five Ghana-time slots. A missing image or permission holds the post; uncertain publishing is never retried blindly.
-- Syncs new app events into an `App Log` tab in the approved Google Sheet. The existing tracker tabs are preserved.
+- Tracks all operations in the system database. SHEIN imports extract product photos automatically, using a browser when the page loads its gallery with JavaScript. Imported photos stay pending review in Netlify Blobs; direct uploads are also supported.
 
 The SHEIN consumer cart has no verified official integration in this implementation. Payment approval creates a **manual cart task** with the exact agreed variant and link. It does not add an item or place an order.
 

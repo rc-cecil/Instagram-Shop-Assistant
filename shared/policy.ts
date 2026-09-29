@@ -2,8 +2,6 @@ export const ACCOUNT = '_testing.account1'
 export const ZONE = 'Africa/Accra'
 export const POST_TIMES = ['08:00', '11:45', '15:30', '19:15', '23:00'] as const
 export const PAYMENT_NUMBER = '0551203306'
-export const TRACKER_URL = 'https://docs.google.com/spreadsheets/d/1Cjp7kBqiDRF77eFO5KzD_XXPH513keAIAtvqbAFp5HQ/edit'
-export const FOLDER_URL = 'https://drive.google.com/drive/folders/1egAhH0ODEbFm8fKyxpMe1aPEklf2cWhG'
 export const USD_TO_GHS = 13
 export const MARKUP_USD = 5
 

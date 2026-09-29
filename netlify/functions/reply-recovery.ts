@@ -6,4 +6,6 @@ export default async function() {
   await db().sql`UPDATE reply_jobs SET status='uncertain',error='Worker stopped before outcome was recorded; inspect Instagram',updated_at=now() WHERE status IN ('processing','sending') AND updated_at<now()-interval '5 minutes'`
   await processPendingReplies(5)
 }
-export const config: Config = { schedule: '* * * * *' }
+// Webhooks start replies immediately; this is only recovery for interrupted jobs.
+// Leave idle gaps so the database can suspend between recovery checks.
+export const config: Config = { schedule: '*/15 * * * *' }

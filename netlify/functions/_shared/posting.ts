@@ -1,5 +1,5 @@
 import { POST_TIMES, ghanaDate, postingSlot } from '../../../shared/policy'
-import { db, enqueueSync, graph, log } from './server'
+import { db, recordUpdate, graph, log } from './server'
 import { inspectJpg } from './photos'
 import { duplicatePhoto } from '../../../shared/policy'
 
@@ -44,7 +44,7 @@ export async function postDue(now = new Date(), origin: string, supervised = fal
     const media = await graph(`${published.id}?fields=id,permalink`)
     await db().sql`UPDATE posts SET media_id=${media.id},permalink=${media.permalink || null},status='published',published_at=now() WHERE id=${postId}`
     await db().sql`UPDATE photos SET status='posted' WHERE id=${photo.id}`
-    await enqueueSync('post',postId)
+    await recordUpdate('post',postId)
     return 'published'
   } catch(error) {
     await db().sql`UPDATE posts SET status='uncertain',error=${String(error)} WHERE id=${postId}`
