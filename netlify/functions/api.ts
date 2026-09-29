@@ -69,7 +69,7 @@ async function importShein(link:string) {
 
 export default async function(req:Request) {
   const user=await owner(req)
-  if (!user) return fail(`Owner sign-in required (bearer ${req.headers.get('authorization')?.startsWith('Bearer ')?'present':'missing'}, cookie ${req.headers.get('cookie')?.includes('nf_jwt=')?'present':'missing'})`,401)
+  if (!user) return fail('Owner sign-in required',401)
   const path=new URL(req.url).pathname.replace(/^\/api\/app\/?/,'')
   try {
     if (req.method==='GET' && path==='dashboard') return respond(await snapshot())
