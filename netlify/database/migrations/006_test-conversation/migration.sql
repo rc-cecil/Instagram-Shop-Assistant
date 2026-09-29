@@ -1,0 +1,6 @@
+INSERT INTO messages(id,conversation_id,direction,body,status) VALUES
+('20000000-0000-4000-8000-000000000001','IG-114210563301570','inbound','Customer requested two Catalunya 1899 polos, size M, multicolor, to Jean Nelson Hall. Customer agreed to GH₵452.40 item total.','received'),
+('20000000-0000-4000-8000-000000000002','IG-114210563301570','outbound','Please send GH₵452.40 by MoMo to 0551203306 for order ORD-20260928-001. After sending, please reply with the transaction reference or a screenshot so the payment can be checked. You will be contacted when the order is ready for delivery.','sent'),
+('20000000-0000-4000-8000-000000000003','IG-114210563301570','inbound','Customer sent an image of the conversation, not payment evidence.','received'),
+('20000000-0000-4000-8000-000000000004','IG-114210563301570','outbound','Thanks. The photo shows our chat, but I can’t see a MoMo transaction reference or payment confirmation in it. Please send the MoMo reference or a screenshot of the completed transaction for order ORD-20260928-001. Delivery is expected about two weeks after we confirm your payment, and we’ll contact you when the order is ready for delivery.','sent')
+ON CONFLICT(id) DO NOTHING;
