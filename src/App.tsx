@@ -14,7 +14,8 @@ const nav:[Page,any][]=[['Overview',LayoutDashboard],['Products',Package],['Post
 const money=(n:number)=>`GH₵${Number(n||0).toFixed(2)}`
 const date=(s:string|null)=>s?new Intl.DateTimeFormat('en-GH',{timeZone:'Africa/Accra',dateStyle:'medium',timeStyle:'short'}).format(new Date(s)):'—'
 const status=(s:string)=>s.replaceAll('_',' ')
-const api=async(path:string, init?:RequestInit)=>{const r=await fetch(`/api/app/${path}`,{headers:{...(init?.body instanceof FormData?{}:{'Content-Type':'application/json'}),...init?.headers},...init});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data}
+const identityToken=()=>document.cookie.split(';').map(part=>part.trim()).find(part=>part.startsWith('nf_jwt='))?.slice('nf_jwt='.length)
+const api=async(path:string, init?:RequestInit)=>{const token=identityToken();const r=await fetch(`/api/app/${path}`,{headers:{...(init?.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(token?{Authorization:`Bearer ${decodeURIComponent(token)}`}:{}) ,...init?.headers},...init});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data}
 
 function Login({onDone}:{onDone:()=>void}) {
   const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
@@ -32,6 +33,7 @@ export default function App(){
   const isPreview=import.meta.env.DEV&&new URLSearchParams(location.search).has('preview')
   const reload=async()=>{if(isPreview){setData(preview);return}try{setData(await api('dashboard'));setError('')}catch(err){setError(String(err))}}
   useEffect(()=>{if(isPreview){setUser({email:'owner@example.com'});setData(preview)}else handleAuthCallback().then(async result=>{if(result?.type==='invite')setInviteToken(result.token||null);if(result?.type==='recovery')setPasswordRecovery(true);setUser(await getUser())}).catch(err=>{setError(String(err));setUser(null)})},[])
+  useEffect(()=>{const connect=async(event:MouseEvent)=>{const target=event.target as Element|null;if(!target?.closest('a[href="/api/meta/auth/start"]'))return;event.preventDefault();try{const result=await api('meta-connect',{method:'POST'});window.location.assign(result.url)}catch(err){setError(String(err))}};document.addEventListener('click',connect);return()=>document.removeEventListener('click',connect)},[])
   useEffect(()=>{if(user)reload()},[user])
   const action=async(path:string,payload:unknown,success='Saved')=>{setBusy(true);setError('');try{await api(path,{method:'POST',body:JSON.stringify(payload)});await reload();setToast(success);setTimeout(()=>setToast(''),4500)}catch(err){setError(String(err))}finally{setBusy(false)}}
   if(user===undefined)return <div className="loading-screen">Opening shop operations…</div>

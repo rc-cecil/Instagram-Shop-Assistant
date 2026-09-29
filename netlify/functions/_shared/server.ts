@@ -22,7 +22,8 @@ export async function owner(req?: Request): Promise<{ id: string; email: string 
   // signed-in browser sent its nf_jwt cookie. Validate that token against this
   // site's Identity endpoint before treating the request as authenticated.
   if (!user && req) {
-    const jwt = cookie(req, 'nf_jwt')
+    const authorization = req.headers.get('authorization') || ''
+    const jwt = authorization.startsWith('Bearer ') ? authorization.slice(7) : cookie(req, 'nf_jwt')
     if (jwt) {
       const identityUrl = new URL('/.netlify/identity/user', req.url)
       const response = await fetch(identityUrl, { headers: { Authorization: `Bearer ${jwt}` } })

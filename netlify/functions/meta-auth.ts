@@ -2,12 +2,12 @@ import type { Config } from '@netlify/functions'
 import { db, encrypt, env, fail, json, owner } from './_shared/server'
 
 export default async function(req: Request) {
-  const user = await owner(req)
-  if (!user) return fail('Owner sign-in required', 401)
   const url = new URL(req.url)
   const base = `${url.protocol}//${url.host}`
   const redirect = `${base}/api/meta/auth/callback`
   if (url.pathname.endsWith('/start')) {
+    const user = await owner(req)
+    if (!user) return fail('Owner sign-in required', 401)
     if (!env('META_APP_ID') || !env('META_APP_SECRET')) return fail('Meta app ID and secret are not configured')
     const state = crypto.randomUUID()
     await db().sql`INSERT INTO settings(key,value) VALUES ('oauth_state',${JSON.stringify({state,created:Date.now()})}::jsonb) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`

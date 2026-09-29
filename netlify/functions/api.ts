@@ -79,6 +79,18 @@ export default async function(req:Request) {
       return respond({messages})
     }
     if (req.method!=='POST') return fail('Not found',404)
+    if (path==='meta-connect') {
+      if (!env('META_APP_ID') || !env('META_APP_SECRET')) return fail('Meta app ID and secret are not configured')
+      const state=crypto.randomUUID()
+      await db().sql`INSERT INTO settings(key,value) VALUES ('oauth_state',${JSON.stringify({state,created:Date.now()})}::jsonb) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`
+      const auth=new URL('https://www.instagram.com/oauth/authorize')
+      auth.searchParams.set('client_id',env('META_APP_ID'))
+      auth.searchParams.set('redirect_uri',`${new URL(req.url).origin}/api/meta/auth/callback`)
+      auth.searchParams.set('response_type','code')
+      auth.searchParams.set('scope','instagram_business_basic,instagram_business_manage_messages,instagram_business_content_publish')
+      auth.searchParams.set('state',state)
+      return respond({url:auth.href})
+    }
     if (path==='automation') {
       const input=await body(req)
       const replies=input.replies===true,posting=input.posting===true
