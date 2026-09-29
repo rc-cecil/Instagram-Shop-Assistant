@@ -4,7 +4,7 @@ import sharp from 'sharp'
 import { ACCOUNT, FOLDER_URL, PAYMENT_NUMBER, POST_TIMES, TRACKER_URL, normalizeProductId, sellingPrice } from '../../shared/policy'
 import { db, enqueueSync, env, fail, graph, json, log, owner } from './_shared/server'
 import { assertUniquePhoto, inspectJpg } from './_shared/photos'
-import { driveFile, driveImages, driveUploadJpg, syncPending } from './_shared/google'
+import { checkGoogleAccess, driveFile, driveImages, driveUploadJpg, syncPending } from './_shared/google'
 import { postDue } from './_shared/posting'
 
 const respond = (value:unknown) => json(value)
@@ -90,6 +90,19 @@ export default async function(req:Request) {
       auth.searchParams.set('scope','instagram_business_basic,instagram_business_manage_messages,instagram_business_content_publish')
       auth.searchParams.set('state',state)
       return respond({url:auth.href})
+    }
+    if (path==='integration-check') {
+      const input=await body(req)
+      if (input.service==='gonka') {
+        const key=env('GONKA_API_KEY')
+        if (!key) return fail('GonkaRouter key is not configured',409)
+        const response=await fetch('https://api.gonkarouter.io/v1/models',{headers:{Authorization:`Bearer ${key}`}})
+        if (!response.ok) return fail(`GonkaRouter authentication failed (${response.status})`,502)
+        const result=await response.json()
+        return respond({service:'gonka',connected:true,modelAvailable:Array.isArray(result.data)&&result.data.some((model:{id:string})=>model.id==='MiniMaxAI/MiniMax-M2.7')})
+      }
+      if (input.service==='google') return respond({service:'google',connected:true,...await checkGoogleAccess()})
+      return fail('Unknown integration')
     }
     if (path==='automation') {
       const input=await body(req)

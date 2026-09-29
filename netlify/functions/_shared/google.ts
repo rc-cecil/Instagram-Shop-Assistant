@@ -31,6 +31,18 @@ export async function driveImages() {
   if (!response.ok) throw new Error(`Drive listing failed: ${response.status}`)
   return (await response.json()).files as {id:string;name:string;webViewLink?:string}[]
 }
+export async function checkGoogleAccess() {
+  const token = await googleToken()
+  const [folder, tracker] = await Promise.all([
+    fetch(`https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name,mimeType,trashed`, { headers: { Authorization: `Bearer ${token}` } }),
+    fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=spreadsheetId,properties(title)`, { headers: { Authorization: `Bearer ${token}` } })
+  ])
+  if (!folder.ok) throw new Error(`Approved Drive folder access failed (${folder.status})`)
+  if (!tracker.ok) throw new Error(`Approved tracker access failed (${tracker.status})`)
+  const folderData = await folder.json(), trackerData = await tracker.json()
+  if (folderData.id !== folderId || folderData.mimeType !== 'application/vnd.google-apps.folder' || folderData.trashed || trackerData.spreadsheetId !== sheetId) throw new Error('Approved Google resources did not match')
+  return { folder: folderData.name as string, tracker: trackerData.properties?.title as string }
+}
 export async function driveFile(fileId:string) {
   const token = await googleToken()
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,{headers:{Authorization:`Bearer ${token}`}})
