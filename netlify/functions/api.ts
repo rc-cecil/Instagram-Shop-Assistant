@@ -9,22 +9,24 @@ import { postDue } from './_shared/posting'
 
 const respond = (value:unknown) => json(value)
 async function body(req:Request) { try { return await req.json() } catch { throw new Error('Invalid JSON body') } }
-async function snapshot() {
-  const [settings,products,photos,posts,conversations,orders,cart,activity,usage,sync,jobs] = await Promise.all([
+async function snapshot(shopId='mivelle') {
+  const [settings,shops,products,photos,posts,conversations,orders,cart,activity,usage,sync,jobs] = await Promise.all([
     db().sql`SELECT key,value FROM settings WHERE key IN ('automation','ai_cap_cents','shop','instagram_connection','launch_review')`,
+    db().sql`SELECT id,name,instagram_username,timezone,payment_number,payment_method,markup_usd,usd_to_ghs,delivery_message,drive_folder_id,tracker_sheet_id,enabled FROM shops ORDER BY created_at`,
     db().sql`SELECT id,name,source_url,description,shein_usd,sizes,colours,stock_status,approved,excluded,note FROM products ORDER BY id`,
-    db().sql`SELECT id,product_id,source_file_id,sha256,phash,status,image_url,approved_caption FROM photos ORDER BY created_at DESC`,
-    db().sql`SELECT id,photo_id,slot_date,slot_time,caption,status,permalink,error FROM posts ORDER BY published_at DESC NULLS LAST LIMIT 80`,
-    db().sql`SELECT id,handle,status,human_takeover,last_message_at,last_reply_at FROM conversations ORDER BY updated_at DESC LIMIT 100`,
-    db().sql`SELECT o.*,p.name product_name,p.source_url FROM orders o JOIN products p ON p.id=o.product_id ORDER BY o.created_at DESC LIMIT 100`,
-    db().sql`SELECT c.*,o.product_id,o.size,o.colour,o.quantity,p.source_url FROM cart_tasks c JOIN orders o ON o.id=c.order_id JOIN products p ON p.id=o.product_id ORDER BY c.created_at DESC`,
-    db().sql`SELECT kind,entity_id,detail,created_at FROM activity ORDER BY created_at DESC LIMIT 40`,
-    db().sql`SELECT COALESCE(SUM(actual_cents),0)::int cents,COALESCE(SUM(estimated_usd),0)::float estimated_usd,COALESCE(SUM(input_tokens),0)::int input_tokens,COALESCE(SUM(output_tokens),0)::int output_tokens FROM ai_usage WHERE created_at >= date_trunc('month',now())`,
-    db().sql`SELECT kind,entity_id,status,error FROM sync_jobs WHERE status!='complete' ORDER BY created_at DESC LIMIT 30`,
-    db().sql`SELECT id,conversation_id,status,error,updated_at FROM reply_jobs WHERE status!='complete' ORDER BY updated_at DESC LIMIT 50`
+    db().sql`SELECT id,product_id,source_file_id,sha256,phash,status,image_url,approved_caption FROM photos WHERE shop_id=${shopId} ORDER BY created_at DESC`,
+    db().sql`SELECT id,photo_id,slot_date,slot_time,caption,status,permalink,error FROM posts WHERE shop_id=${shopId} ORDER BY published_at DESC NULLS LAST LIMIT 80`,
+    db().sql`SELECT id,handle,status,human_takeover,last_message_at,last_reply_at FROM conversations WHERE shop_id=${shopId} ORDER BY updated_at DESC LIMIT 100`,
+    db().sql`SELECT o.*,p.name product_name,p.source_url FROM orders o JOIN products p ON p.id=o.product_id WHERE o.shop_id=${shopId} ORDER BY o.created_at DESC LIMIT 100`,
+    db().sql`SELECT c.*,o.product_id,o.size,o.colour,o.quantity,p.source_url FROM cart_tasks c JOIN orders o ON o.id=c.order_id JOIN products p ON p.id=o.product_id WHERE c.shop_id=${shopId} ORDER BY c.created_at DESC`,
+    db().sql`SELECT kind,entity_id,detail,created_at FROM activity WHERE shop_id=${shopId} ORDER BY created_at DESC LIMIT 40`,
+    db().sql`SELECT COALESCE(SUM(actual_cents),0)::int cents,COALESCE(SUM(estimated_usd),0)::float estimated_usd,COALESCE(SUM(input_tokens),0)::int input_tokens,COALESCE(SUM(output_tokens),0)::int output_tokens FROM ai_usage WHERE shop_id=${shopId} AND created_at >= date_trunc('month',now())`,
+    db().sql`SELECT kind,entity_id,status,error FROM sync_jobs WHERE shop_id=${shopId} AND status!='complete' ORDER BY created_at DESC LIMIT 30`,
+    db().sql`SELECT id,conversation_id,status,error,updated_at FROM reply_jobs WHERE shop_id=${shopId} AND status!='complete' ORDER BY updated_at DESC LIMIT 50`
   ])
   const configuration=Object.fromEntries(settings.map(row=>{const s=row as {key:string;value:any};return [s.key,s.key==='instagram_connection'?{connected:true,username:s.value?.username,expiresAt:s.value?.expiresAt}:s.value]}))
-  return {account:ACCOUNT,configuration,products,photos,posts,conversations,orders,cart,activity,usage:usage[0],sync,jobs,trackerUrl:TRACKER_URL,folderUrl:FOLDER_URL,postTimes:POST_TIMES}
+  const shop=(shops as any[]).find(item=>item.id===shopId) || shops[0]
+  return {shopId,shops,account:shop?.instagram_username||ACCOUNT,configuration,products,photos,posts,conversations,orders,cart,activity,usage:usage[0],sync,jobs,trackerUrl:shop?`https://docs.google.com/spreadsheets/d/${shop.tracker_sheet_id}/edit`:TRACKER_URL,folderUrl:shop?`https://drive.google.com/drive/folders/${shop.drive_folder_id}`:FOLDER_URL,postTimes:POST_TIMES}
 }
 async function savePhoto(productId:string, jpg:Buffer, sourceFileId:string|null) {
   const product=await db().sql`SELECT id FROM products WHERE id=${productId}`
@@ -72,7 +74,8 @@ export default async function(req:Request) {
   if (!user) return fail('Owner sign-in required',401)
   const path=new URL(req.url).pathname.replace(/^\/api\/app\/?/,'')
   try {
-    if (req.method==='GET' && path==='dashboard') return respond(await snapshot())
+    const shopId=req.headers.get('x-shop-id') || 'mivelle'
+    if (req.method==='GET' && path==='dashboard') return respond(await snapshot(shopId))
     if (req.method==='GET' && path.startsWith('conversation/')) {
       const id=decodeURIComponent(path.slice('conversation/'.length))
       const messages=await db().sql`SELECT id,meta_id,direction,body,attachment_url,status,created_at FROM messages WHERE conversation_id=${id} ORDER BY created_at`
@@ -101,7 +104,7 @@ export default async function(req:Request) {
         const result=await response.json()
         return respond({service:'gonka',connected:true,modelAvailable:Array.isArray(result.data)&&result.data.some((model:{id:string})=>model.id==='MiniMaxAI/MiniMax-M2.7')})
       }
-      if (input.service==='google') return respond({service:'google',connected:true,...await checkGoogleAccess()})
+      if (input.service==='google') return respond({service:'google',connected:true,...await checkGoogleAccess(shopId)})
       return fail('Unknown integration')
     }
     if (path==='automation') {

@@ -18,6 +18,10 @@ Sign into the dashboard through Netlify Identity, then use **Settings → Connec
 
 Share only the approved folder `1egAhH0ODEbFm8fKyxpMe1aPEklf2cWhG` and tracker spreadsheet `1Cjp7kBqiDRF77eFO5KzD_XXPH513keAIAtvqbAFp5HQ` with the service account email. Add its JSON credential as the secret `GOOGLE_SERVICE_ACCOUNT_JSON`; do not commit it. The app lists JPG files from that folder only. Import each file to a specific product, review the photo, and approve it. The app appends snapshots to an `App Log` tab with unique sync IDs and leaves the existing tabs intact. Failed sync jobs remain visible under Activity for retry.
 
+The primary shop uses the dedicated `mivelle-shop-assistant` Google Cloud project with the Drive and Sheets APIs enabled. The service account needs no project-wide IAM role because access comes from sharing the approved folder only.
+
+For another Instagram shop, create a separate `shops` record with its own Instagram username, Drive folder, tracker, payment and delivery policy, and server-only credential environment variable. A separate Google Cloud project is optional. Keep a distinct scoped service account credential for each shop so its Drive records cannot cross into another shop. Every new shop starts with automation disabled.
+
 ## 4. GonkaRouter
 
 Create a GonkaRouter key in its dashboard and set `GONKA_API_KEY` on Netlify. Copy the current MiniMax-M2.7 input and output USD per million token prices into `GONKA_INPUT_USD_PER_MILLION` and `GONKA_OUTPUT_USD_PER_MILLION`. The app reserves one cent per call against a US$5 monthly cap and shows a separate token-based cost estimate. Review actual provider billing in GonkaRouter. At the cap, if rates are missing, or on an API failure, the DM waits for the owner.

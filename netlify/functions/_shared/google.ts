@@ -1,18 +1,24 @@
 import { createSign } from 'node:crypto'
 import { db, env } from './server'
 
-const folderId = '1egAhH0ODEbFm8fKyxpMe1aPEklf2cWhG'
-const sheetId = '1Cjp7kBqiDRF77eFO5KzD_XXPH513keAIAtvqbAFp5HQ'
-function credentials() {
-  const raw = env('GOOGLE_SERVICE_ACCOUNT_JSON')
+export type GoogleShop = { id:string; drive_folder_id:string; tracker_sheet_id:string; google_credential_env:string }
+const fallbackShop:GoogleShop = { id:'mivelle', drive_folder_id:'1egAhH0ODEbFm8fKyxpMe1aPEklf2cWhG', tracker_sheet_id:'1Cjp7kBqiDRF77eFO5KzD_XXPH513keAIAtvqbAFp5HQ', google_credential_env:'GOOGLE_SERVICE_ACCOUNT_JSON' }
+export async function googleShop(shopId='mivelle'):Promise<GoogleShop> {
+  try {
+    const rows=await db().sql`SELECT id,drive_folder_id,tracker_sheet_id,google_credential_env FROM shops WHERE id=${shopId}`
+    return (rows[0] as GoogleShop) || fallbackShop
+  } catch { return fallbackShop }
+}
+function credentials(credentialEnv='GOOGLE_SERVICE_ACCOUNT_JSON') {
+  const raw = env(credentialEnv)
   if (!raw) throw new Error('Google Drive service account is not connected')
   const value = JSON.parse(raw)
   if (!value.client_email || !value.private_key) throw new Error('Google service account credentials invalid')
   return value as {client_email:string;private_key:string}
 }
 function encoded(value: unknown) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
-export async function googleToken() {
-  const creds = credentials(), now = Math.floor(Date.now()/1000)
+export async function googleToken(credentialEnv='GOOGLE_SERVICE_ACCOUNT_JSON') {
+  const creds = credentials(credentialEnv), now = Math.floor(Date.now()/1000)
   const unsigned = `${encoded({alg:'RS256',typ:'JWT'})}.${encoded({iss:creds.client_email,scope:'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets',aud:'https://oauth2.googleapis.com/token',iat:now,exp:now+3600})}`
   const signer = createSign('RSA-SHA256'); signer.update(unsigned)
   const assertion = `${unsigned}.${signer.sign(creds.private_key).toString('base64url')}`
@@ -21,8 +27,9 @@ export async function googleToken() {
   if (!response.ok) throw new Error('Google service account authorization failed')
   return data.access_token as string
 }
-export async function driveImages() {
-  const token = await googleToken()
+export async function driveImages(shopId='mivelle') {
+  const shop=await googleShop(shopId), folderId=shop.drive_folder_id
+  const token = await googleToken(shop.google_credential_env)
   const url = new URL('https://www.googleapis.com/drive/v3/files')
   url.searchParams.set('q',`'${folderId}' in parents and mimeType = 'image/jpeg' and trashed = false`)
   url.searchParams.set('fields','nextPageToken,files(id,name,mimeType,webViewLink)')
@@ -31,8 +38,9 @@ export async function driveImages() {
   if (!response.ok) throw new Error(`Drive listing failed: ${response.status}`)
   return (await response.json()).files as {id:string;name:string;webViewLink?:string}[]
 }
-export async function checkGoogleAccess() {
-  const token = await googleToken()
+export async function checkGoogleAccess(shopId='mivelle') {
+  const shop=await googleShop(shopId), folderId=shop.drive_folder_id, sheetId=shop.tracker_sheet_id
+  const token = await googleToken(shop.google_credential_env)
   const [folder, tracker] = await Promise.all([
     fetch(`https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,name,mimeType,trashed`, { headers: { Authorization: `Bearer ${token}` } }),
     fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=spreadsheetId,properties(title)`, { headers: { Authorization: `Bearer ${token}` } })
@@ -43,14 +51,14 @@ export async function checkGoogleAccess() {
   if (folderData.id !== folderId || folderData.mimeType !== 'application/vnd.google-apps.folder' || folderData.trashed || trackerData.spreadsheetId !== sheetId) throw new Error('Approved Google resources did not match')
   return { folder: folderData.name as string, tracker: trackerData.properties?.title as string }
 }
-export async function driveFile(fileId:string) {
-  const token = await googleToken()
+export async function driveFile(fileId:string,shopId='mivelle') {
+  const shop=await googleShop(shopId), token = await googleToken(shop.google_credential_env)
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,{headers:{Authorization:`Bearer ${token}`}})
   if (!response.ok) throw new Error(`Drive download failed: ${response.status}`)
   return Buffer.from(await response.arrayBuffer())
 }
-export async function driveUploadJpg(name:string, bytes:Buffer) {
-  const token=await googleToken()
+export async function driveUploadJpg(name:string, bytes:Buffer, shopId='mivelle') {
+  const shop=await googleShop(shopId), folderId=shop.drive_folder_id, token=await googleToken(shop.google_credential_env)
   const boundary=`mivelle-${crypto.randomUUID()}`
   const metadata=JSON.stringify({name,parents:[folderId],mimeType:'image/jpeg'})
   const payload=Buffer.concat([
@@ -62,8 +70,8 @@ export async function driveUploadJpg(name:string, bytes:Buffer) {
   if (!response.ok) throw new Error(`Drive photo upload failed: ${response.status}`)
   return (await response.json()).id as string
 }
-export async function syncPending(limit=20) {
-  const token = await googleToken()
+export async function syncPending(limit=20,shopId='mivelle') {
+  const shop=await googleShop(shopId), sheetId=shop.tracker_sheet_id, token = await googleToken(shop.google_credential_env)
   const metadataResponse=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets(properties(title))`,{headers:{Authorization:`Bearer ${token}`}})
   if (!metadataResponse.ok) throw new Error(`Tracker access failed: ${metadataResponse.status}`)
   const metadata=await metadataResponse.json()
@@ -75,7 +83,7 @@ export async function syncPending(limit=20) {
   const existingResponse=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/'App Log'!A2:A?majorDimension=COLUMNS`,{headers:{Authorization:`Bearer ${token}`}})
   if (!existingResponse.ok) throw new Error(`Tracker sync lookup failed: ${existingResponse.status}`)
   const existing=new Set<string>((await existingResponse.json()).values?.[0]||[])
-  const jobs = await db().sql`SELECT id,kind,entity_id FROM sync_jobs WHERE status IN ('pending','failed') ORDER BY created_at LIMIT ${limit}`
+  const jobs = await db().sql`SELECT id,kind,entity_id FROM sync_jobs WHERE shop_id=${shopId} AND status IN ('pending','failed') ORDER BY created_at LIMIT ${limit}`
   for (const job of jobs) {
     try {
       if (existing.has(job.id)) { await db().sql`UPDATE sync_jobs SET status='complete' WHERE id=${job.id}`; continue }
