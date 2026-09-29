@@ -8,6 +8,7 @@
 - Publish directory: `dist`
 - Functions: `netlify/functions`
 - Database migrations: `netlify/database/migrations`
+- Continuous deployment: GitHub `main`, connected and verified
 
 The first production deploy applied nine migrations and installed eleven functions.
 Both customer replies and publishing are paused in the database. The five posting

@@ -6,6 +6,8 @@ Create or connect a Netlify project for this repository. Use the build command `
 
 Copy `.env.example` to a private local `.env` for development or add its values to Netlify environment variables. Add `TOKEN_ENCRYPTION_KEY` as 32 random bytes encoded in 64 hexadecimal characters. Keep Meta, Google, GonkaRouter, and token encryption secrets server-only. Never prefix them with `VITE_`. Do not enter an Instagram password in this app.
 
+The invited owner must open the email invitation link and complete **Accept your invitation** by setting a dashboard password. Clicking the email link alone does not finish acceptance. Password recovery links open **Set a new password**. The owner enters and submits passwords themselves; never share them in chat. Keep email confirmation required.
+
 ## 2. Meta Instagram connection
 
 Use a Meta developer app configured for **Instagram Login** and the professional account `_testing.account1`. Configure the OAuth redirect URI `https://YOUR-SITE.netlify.app/api/meta/auth/callback` and webhook callback `https://YOUR-SITE.netlify.app/api/meta/webhook`. Set `META_APP_ID`, `META_APP_SECRET`, and a random `META_VERIFY_TOKEN` in Netlify. Subscribe the app to Instagram message events and obtain the `instagram_business_basic`, `instagram_business_manage_messages`, and `instagram_business_content_publish` capabilities. Some accounts require Meta app review or a tester role before live use.

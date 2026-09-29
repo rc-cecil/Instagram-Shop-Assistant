@@ -92,4 +92,20 @@ describe('database and external action boundaries',()=>{
     expect(network).not.toHaveBeenCalled();network.mockRestore()
     expect((await q('SELECT status,error FROM reply_jobs')).rows[0]).toMatchObject({status:'waiting_owner',error:'Error: Monthly AI cap reached'})
   })
+  it('holds an uncertain payment-instruction send without sending it twice',async()=>{
+    await state.engine.exec(`UPDATE settings SET value='{"replies":true,"posting":false}' WHERE key='automation';
+      INSERT INTO products(id,name,source_url) VALUES ('product','Shirt','https://m.shein.com/item-p-1.html');
+      INSERT INTO conversations(id,last_message_at) VALUES ('customer',now());
+      INSERT INTO orders(id,conversation_id,product_id,quantity,agreed_amount_ghs,status) VALUES ('ORDER-A','customer','product',1,226.2,'awaiting_customer_agreement');
+      INSERT INTO messages(id,meta_id,conversation_id,direction,body) VALUES ('00000000-0000-4000-8000-000000000001','a','customer','inbound','CONFIRM ORDER-A');
+      INSERT INTO reply_jobs(id,inbound_meta_id,conversation_id) VALUES ('00000000-0000-4000-8000-000000000002','a','customer');`)
+    state.graph.mockRejectedValue(new Error('Meta connection lost after send'))
+    await processPendingReplies(1)
+    await processPendingReplies(1)
+    expect(state.graph).toHaveBeenCalledTimes(1)
+    expect((await q("SELECT status FROM messages WHERE direction='outbound'")).rows[0].status).toBe('uncertain')
+    expect((await q('SELECT status FROM reply_jobs')).rows[0].status).toBe('uncertain')
+    expect((await q('SELECT status FROM orders')).rows[0].status).toBe('agreed_waiting_payment')
+    expect((await q('SELECT count(*)::int n FROM cart_tasks')).rows[0].n).toBe(0)
+  })
 })
