@@ -7,8 +7,28 @@ export const env = (key: string) => Netlify.env.get(key) || ''
 export const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } })
 export const fail = (message: string, status = 400) => json({ error: message }, status)
 
-export async function owner(): Promise<{ id: string; email: string } | null> {
-  const user = await getUser()
+function cookie(req: Request, name: string): string | null {
+  const raw = req.headers.get('cookie') || ''
+  for (const part of raw.split(';')) {
+    const [key, ...value] = part.trim().split('=')
+    if (key === name) return decodeURIComponent(value.join('='))
+  }
+  return null
+}
+
+export async function owner(req?: Request): Promise<{ id: string; email: string } | null> {
+  let user = await getUser()
+  // Netlify's request context can occasionally omit Identity even though the
+  // signed-in browser sent its nf_jwt cookie. Validate that token against this
+  // site's Identity endpoint before treating the request as authenticated.
+  if (!user && req) {
+    const jwt = cookie(req, 'nf_jwt')
+    if (jwt) {
+      const identityUrl = new URL('/.netlify/identity/user', req.url)
+      const response = await fetch(identityUrl, { headers: { Authorization: `Bearer ${jwt}` } })
+      if (response.ok) user = await response.json()
+    }
+  }
   const email = env('OWNER_EMAIL')
   return user?.email && email && user.email.toLowerCase() === email.toLowerCase() ? { id: user.id, email: user.email } : null
 }

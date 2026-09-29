@@ -2,7 +2,7 @@ import type { Config } from '@netlify/functions'
 import { db, encrypt, env, fail, json, owner } from './_shared/server'
 
 export default async function(req: Request) {
-  const user = await owner()
+  const user = await owner(req)
   if (!user) return fail('Owner sign-in required', 401)
   const url = new URL(req.url)
   const base = `${url.protocol}//${url.host}`

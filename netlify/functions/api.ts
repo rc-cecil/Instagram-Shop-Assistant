@@ -68,7 +68,7 @@ async function importShein(link:string) {
 }
 
 export default async function(req:Request) {
-  const user=await owner()
+  const user=await owner(req)
   if (!user) return fail('Owner sign-in required',401)
   const path=new URL(req.url).pathname.replace(/^\/api\/app\/?/,'')
   try {
