@@ -12,7 +12,7 @@ import { POST_TIMES, postingSlot } from '../shared/policy'
 
 const port = Number(process.env.PORT || 3000)
 const base = process.env.PUBLIC_BASE_URL || `http://localhost:${port}`
-if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+if (!process.env.DATABASE_URL && process.env.MIVELLE_TEST_MODE !== 'true') throw new Error('DATABASE_URL is required unless MIVELLE_TEST_MODE=true')
 if (!process.env.OWNER_EMAIL || !process.env.OWNER_PASSWORD_HASH || !process.env.SESSION_SECRET) throw new Error('OWNER_EMAIL, OWNER_PASSWORD_HASH and SESSION_SECRET are required')
 const allowPublish = process.env.ENABLE_META_PUBLISHING === 'true'
 const allowDms = process.env.ENABLE_META_DM_SEND === 'true'

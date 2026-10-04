@@ -4,7 +4,7 @@ The existing React dashboard and business services now run locally with a Node b
 
 ## Start locally
 
-Use Node 22.12+ and PostgreSQL 14+. Follow [docs/local-development.md](docs/local-development.md) for database, `.env`, migration, and integration setup. Then run:
+Use Node 22.12+. For immediate local testing, the bundled PGlite mode needs no separate PostgreSQL installation; for standard PostgreSQL use `DATABASE_URL`. Follow [docs/local-development.md](docs/local-development.md) for database, `.env`, migration, and integration setup. Then run:
 
 ```bash
 npm ci

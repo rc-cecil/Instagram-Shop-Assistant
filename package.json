@@ -8,11 +8,11 @@
     "build": "tsc -b && vite build",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc -b",
-    "dev:backend": "tsx watch server/index.ts",
+    "dev:backend": "node --import tsx server/index.ts",
     "dev:frontend": "vite",
-    "db:migrate": "tsx server/migrate.ts",
+    "db:migrate": "node --import tsx server/migrate.ts",
     "db:setup": "npm run db:migrate",
-    "auth:hash": "tsx server/hash-password.ts"
+    "auth:hash": "node --import tsx server/hash-password.ts"
   },
   "dependencies": {
     "@sparticuz/chromium": "^153.0.0",

@@ -1,12 +1,12 @@
 # Local Mivelle development
 
-This checkout uses the existing React dashboard and business services. Node 22.12+ runs the backend at `http://localhost:3000`; Vite runs the dashboard at `http://localhost:5173` and proxies `/api` to Node. PostgreSQL and local media files replace Netlify Database and Blobs. The backend replaces Netlify Functions; an in-process timer checks the five Africa/Accra posting slots. The timer is off unless `ENABLE_LOCAL_SCHEDULER=true`. There is no periodic DM recovery job; incoming webhooks start the existing reply worker. `server/migrations` contains the unchanged SQL migrations.
+This checkout uses the existing React dashboard and business services. Node 22.12+ runs the backend at `http://localhost:3000`; Vite runs the dashboard at `http://localhost:5173` and proxies `/api` to Node. PostgreSQL and local media files replace Netlify Database and Blobs. An explicit `MIVELLE_TEST_MODE=true` also supports a persistent local PostgreSQL-compatible PGlite database without installing a server. The backend replaces Netlify Functions; an in-process timer checks the five Africa/Accra posting slots. The timer is off unless `ENABLE_LOCAL_SCHEDULER=true`. There is no periodic DM recovery job; incoming webhooks start the existing reply worker. `server/migrations` contains the unchanged SQL migrations.
 
 ## Setup
 
-1. Install Node 22.12+ and PostgreSQL 14+ separately. Create a database and user matching your chosen `DATABASE_URL` (for example `createdb mivelle` for a local PostgreSQL user).
+1. Install Node 22.12+. For standard PostgreSQL, install PostgreSQL 14+ separately and create a database/user matching `DATABASE_URL`. For quick local testing, set `MIVELLE_TEST_MODE=true`, clear `DATABASE_URL`, and use `MIVELLE_TEST_DB_DIR=data/pglite`. This writes data under `data/` and survives restarts.
 2. Run `npm ci` and copy `.env.example` to `.env`.
-3. Set `DATABASE_URL`, `OWNER_EMAIL`, `SESSION_SECRET` (a long random value), and `OWNER_PASSWORD_HASH`. Generate the last value with `npm run auth:hash -- 'your-long-password'` and paste the output into `.env`. Do not commit `.env`.
+3. Set either `DATABASE_URL` or `MIVELLE_TEST_MODE=true`, plus `OWNER_EMAIL`, `SESSION_SECRET` (a long random value), and `OWNER_PASSWORD_HASH`. Generate the last value with `npm run auth:hash -- 'your-long-password'` and paste the output into `.env`. Do not commit `.env`.
 4. Run `npm run db:migrate` and `npm run dev`. Open `http://localhost:5173` and sign in with the owner email/password.
 
 ## Safe tests
@@ -31,6 +31,8 @@ Set `CHROME_EXECUTABLE_PATH` to a locally installed Chrome or Chromium binary if
 - Meta DMs: verify the GET handshake at `/api/meta/webhook` with your `META_VERIFY_TOKEN`; send a signed POST from Meta through a temporary HTTPS tunnel. The unique Meta message ID is stored in `webhook_events`, `messages`, and `reply_jobs`. Outgoing sends stay blocked until `ENABLE_META_DM_SEND=true`.
 - GonkaRouter: configure `GONKA_API_KEY`, `GONKA_BASE_URL`, and both token rates. With automated replies enabled in the dashboard and outgoing DMs explicitly enabled, send one test DM from an authorized test account. Check its reply job, AI usage, and conversation record.
 - Payment: create an approved product and customer order, add evidence, and use the owner payment decision. Confirm that a cart task appears only after approval. Never use a real payment for local tests.
-- Restart: stop and restart `npm run dev`; revisit products, posts, conversations, orders, payment decisions, and media. These are stored in PostgreSQL and `MEDIA_DIRECTORY`, not process memory.
+- Restart: stop and restart `npm run dev`; revisit products, posts, conversations, orders, payment decisions, and media. These are stored in PostgreSQL (or the local PGlite test directory) and `MEDIA_DIRECTORY`, not process memory.
 
-The existing tests use a PostgreSQL compatible in-process engine and mocked external calls. They do not prove connectivity to your PostgreSQL server, Meta account, GonkaRouter account, or SHEIN login. Run those real checks only after their credentials and accounts are configured.
+The existing tests use a PostgreSQL compatible in-process engine and mocked external calls. The PGlite test mode does not prove connectivity to an external PostgreSQL server, Meta account, GonkaRouter account, or SHEIN login. Run those real checks only after their credentials and accounts are configured.
+
+The local test mode is for development only. For later hosting, set `DATABASE_URL` and leave `MIVELLE_TEST_MODE=false`; the backend then uses the normal PostgreSQL driver. The `dev:backend` script does not watch source files on systems with low file-watcher limits; restart `npm run dev` after backend code changes.
