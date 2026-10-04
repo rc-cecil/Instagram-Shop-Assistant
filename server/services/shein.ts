@@ -37,8 +37,10 @@ export function staticDetails(html:string):SheinDetails {
 }
 
 export async function renderedDetails(url:string):Promise<SheinDetails> {
-  const [{default:puppeteer},{default:chromium}]=await Promise.all([import('puppeteer-core'),import('@sparticuz/chromium')])
-  const browser=await puppeteer.launch({args:chromium.args,executablePath:await chromium.executablePath(),headless:'shell',defaultViewport:{width:430,height:900,isMobile:true}})
+  const {default:puppeteer}=await import('puppeteer-core')
+  const localChrome=process.env.CHROME_EXECUTABLE_PATH
+  const chromium=localChrome ? null : (await import('@sparticuz/chromium')).default
+  const browser=await puppeteer.launch({args:chromium?.args || [],executablePath:localChrome || await chromium!.executablePath(),headless:localChrome ? true : 'shell',defaultViewport:{width:430,height:900,isMobile:true}})
   try {
     const page=await browser.newPage()
     await page.setRequestInterception(true)

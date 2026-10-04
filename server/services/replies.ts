@@ -1,4 +1,4 @@
-import { PAYMENT_NUMBER, replyAllowed, sellingPrice } from '../../../shared/policy'
+import { PAYMENT_NUMBER, replyAllowed, sellingPrice } from '../../shared/policy'
 import { db, env, graph, log, recordUpdate } from './server'
 
 type Job = { id: string; inbound_meta_id: string; conversation_id: string }
@@ -56,7 +56,7 @@ async function aiReply(conversationId: string, incoming: string, products: Produ
     const history = await db().sql`SELECT direction,left(body,1500) body FROM messages WHERE conversation_id=${conversationId} AND body IS NOT NULL ORDER BY created_at DESC LIMIT 12`
     const facts = products.filter(p=>p.approved).map(p => ({id:p.id,name:p.name,url:p.source_url,description:p.description,verifiedPriceGhs:p.shein_usd === null ? null : sellingPrice(Number(p.shein_usd)),sizes:p.sizes,colours:p.colours,stock:p.stock_status}))
     const system = `You are the Instagram shopping assistant for _testing.account1. Reply naturally and briefly in Ghana English. Use ONLY the JSON catalog and policies below. Never invent price, size, colour, stock, discount or delivery charge. If unclear, ask one focused question. Delivery is expected about two weeks from confirmed payment; the owner contacts customers when ready. Never claim payment received or an order placed. Never send payment instructions. Do not promise availability. Return ONLY JSON with reply (string) and optionally orderDraft: {productId,size,colour,quantity,deliveryLocation}. Include orderDraft only when the customer explicitly requested an order and supplied every field; interest is insufficient. Match size and colour exactly to approved catalog values. The server will ask the customer to confirm the exact item amount before payment. Catalog: ${JSON.stringify(facts)}`
-    const response = await fetch('https://api.gonkarouter.io/v1/messages',{method:'POST',headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},body:JSON.stringify({model:'MiniMaxAI/MiniMax-M2.7',max_tokens:1024,system,messages:[{role:'user',content:`Conversation history (oldest first): ${JSON.stringify([...history].reverse())}\nLatest message: ${incoming}`} ]})})
+    const response = await fetch(env('GONKA_BASE_URL') || 'https://api.gonkarouter.io/v1/messages',{method:'POST',headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},body:JSON.stringify({model:'MiniMaxAI/MiniMax-M2.7',max_tokens:1024,system,messages:[{role:'user',content:`Conversation history (oldest first): ${JSON.stringify([...history].reverse())}\nLatest message: ${incoming}`} ]})})
     const data = await response.json()
     if (!response.ok) throw new Error(`GonkaRouter ${response.status}`)
     const text = (data.content || []).filter((b:{type:string})=>b.type==='text').map((b:{text:string})=>b.text).join('').trim()
@@ -88,6 +88,7 @@ export async function processPendingReplies(limit = 5) {
     const job = await claim()
     if (!job) break
     try {
+      if (env('ENABLE_META_DM_SEND') !== 'true') { await hold(job, 'Outgoing Meta DMs are disabled locally'); continue }
       const config = await db().sql`SELECT value FROM settings WHERE key='automation'`
       if (!config[0]?.value?.replies) { await hold(job,'Automated replies are paused'); continue }
       const conversation = await db().sql`SELECT human_takeover,last_message_at FROM conversations WHERE id=${job.conversation_id}`

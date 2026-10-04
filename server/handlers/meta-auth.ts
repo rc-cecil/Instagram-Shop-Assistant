@@ -1,5 +1,4 @@
-import type { Config } from '@netlify/functions'
-import { db, encrypt, env, fail, json, owner } from './_shared/server'
+import { db, encrypt, env, fail, json, owner } from '../services/server'
 
 export default async function(req: Request) {
   const url = new URL(req.url)
@@ -40,6 +39,5 @@ export default async function(req: Request) {
   if (!profileResponse.ok || profile.username !== '_testing.account1') return fail('Connected account is not the approved test account', 403)
   await db().sql`INSERT INTO settings(key,value) VALUES ('instagram_connection',${JSON.stringify({id:profile.id,username:profile.username,token:encrypt(long.access_token),expiresAt:Date.now()+(long.expires_in || 5184000)*1000})}::jsonb) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`
   await db().sql`DELETE FROM settings WHERE key='oauth_state'`
-  return Response.redirect(`${base}/?connected=instagram`,302)
+  return Response.redirect(`${env('FRONTEND_BASE_URL') || base}/?connected=instagram`,302)
 }
-export const config: Config = { path: ['/api/meta/auth/start','/api/meta/auth/callback'] }

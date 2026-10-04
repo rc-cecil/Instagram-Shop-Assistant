@@ -5,30 +5,30 @@ import { createHmac } from 'node:crypto'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state=vi.hoisted(()=>({engine:null as any,graph:vi.fn(),owner:null as any,render:vi.fn(),store:vi.fn()}))
-vi.mock('../netlify/functions/_shared/shein',async original=>({...await original<any>(),renderedDetails:(...args:any[])=>state.render(...args)}))
-vi.mock('@netlify/blobs',()=>({getStore:()=>({set:(...args:any[])=>state.store(...args)})}))
-vi.mock('../netlify/functions/_shared/server',async importOriginal=>({
+vi.mock('../server/services/shein',async original=>({...await original<any>(),renderedDetails:(...args:any[])=>state.render(...args)}))
+vi.mock('../server/storage',()=>({storage:{put:(...args:any[])=>state.store(...args),get:vi.fn()}}))
+vi.mock('../server/services/server',async importOriginal=>({
   ...await importOriginal<any>(),
   db:()=>({sql:async(strings:TemplateStringsArray,...values:any[])=>{
     const query=strings.reduce((s,part,i)=>s+part+(i<values.length?`$${i+1}`:''),'')
     return (await state.engine.query(query,values)).rows
   }}),
-  env:(key:string)=>({META_APP_SECRET:'secret',META_VERIFY_TOKEN:'verify',GONKA_API_KEY:'key',GONKA_INPUT_USD_PER_MILLION:'0.0021',GONKA_OUTPUT_USD_PER_MILLION:'0.0021'} as Record<string,string>)[key]||'',
+  env:(key:string)=>({META_APP_SECRET:'secret',META_VERIFY_TOKEN:'verify',ENABLE_META_DM_SEND:'true',ENABLE_META_PUBLISHING:'true',GONKA_API_KEY:'key',GONKA_INPUT_USD_PER_MILLION:'0.0021',GONKA_OUTPUT_USD_PER_MILLION:'0.0021'} as Record<string,string>)[key]||'',
   owner:async()=>state.owner,
   log:async(kind:string,entityId:string,detail:string)=>state.engine.query('INSERT INTO activity(id,kind,entity_id,detail) VALUES ($1,$2,$3,$4)',[crypto.randomUUID(),kind,entityId,detail]),
   recordUpdate:async(kind:string,entityId:string)=>state.engine.query('INSERT INTO activity(id,kind,entity_id,detail) VALUES ($1,$2,$3,$4)',[crypto.randomUUID(),`${kind}_updated`,entityId,`${kind} record updated in the system`]),
   igCredentials:async()=>({id:'approved-account',token:'test-token'}),
   graph:(...args:any[])=>state.graph(...args)
 }))
-import webhook from '../netlify/functions/meta-webhook'
-import api from '../netlify/functions/api'
-import { postDue } from '../netlify/functions/_shared/posting'
-import { processPendingReplies } from '../netlify/functions/_shared/replies'
+import webhook from '../server/handlers/meta-webhook'
+import api from '../server/handlers/api'
+import { postDue } from '../server/services/posting'
+import { processPendingReplies } from '../server/services/replies'
 
 beforeAll(async()=>{
   state.engine=new PGlite()
   for(const folder of ['001_initial','004_sync-events','005_photo-captions','007_launch-gate','008_ai-budget','009_conversation-lock','010_multi_shop','011_system_tracking']) {
-    await state.engine.exec(readFileSync(new URL(`../netlify/database/migrations/${folder}/migration.sql`,import.meta.url),'utf8'))
+    await state.engine.exec(readFileSync(new URL(`../server/migrations/${folder}/migration.sql`,import.meta.url),'utf8'))
   }
 },30_000)
 beforeEach(async()=>{

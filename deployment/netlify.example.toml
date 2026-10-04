@@ -1,0 +1,10 @@
+# Optional future static frontend template. A Node backend, PostgreSQL, storage,
+# and scheduler still need hosting and /api routing before deploying.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

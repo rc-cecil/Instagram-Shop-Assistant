@@ -1,9 +1,10 @@
-import { POST_TIMES, ghanaDate, postingSlot } from '../../../shared/policy'
-import { db, recordUpdate, graph, log } from './server'
+import { POST_TIMES, ghanaDate, postingSlot } from '../../shared/policy'
+import { db, recordUpdate, graph, log, env } from './server'
 import { inspectJpg } from './photos'
-import { duplicatePhoto } from '../../../shared/policy'
+import { duplicatePhoto } from '../../shared/policy'
 
 export async function postDue(now = new Date(), origin: string, supervised = false) {
+  if (env('ENABLE_META_PUBLISHING') !== 'true') return 'dry_run'
   const slot = supervised ? 'supervised' : postingSlot(now)
   if (!slot || (!supervised && !POST_TIMES.includes(slot as typeof POST_TIMES[number]))) return 'no_slot'
   const config = await db().sql`SELECT value FROM settings WHERE key='automation'`
