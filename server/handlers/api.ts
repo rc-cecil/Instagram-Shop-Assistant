@@ -47,15 +47,21 @@ async function importShein(link:string) {
   let title:string|null=null,photoId:string|null=null,warning:string|null=null
   try {
     let details:{title:string|null;image:string|null}={title:null,image:null}
+    let challengeDetected=false
     try {
       const response=await fetch(sourceUrl,{headers:{'User-Agent':'Mozilla/5.0'},signal:AbortSignal.timeout(8000)})
-      if (new URL(response.url).pathname.startsWith('/risk/challenge')) throw new Error('SHEIN requires manual security verification. Open the source link in your browser, complete the check, and upload a product JPG here. Automated extraction was paused')
-      if (response.ok) details=staticDetails(await response.text())
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith('SHEIN requires manual security verification')) throw error
+      challengeDetected=new URL(response.url).pathname.startsWith('/risk/challenge')
+      if (response.ok && !challengeDetected) details=staticDetails(await response.text())
+    } catch {
       // JavaScript rendering below is also used for unavailable static pages.
     }
-    if (!details.image) details=await renderedDetails(parsed.href)
+    if (!details.image) {
+      try { details=await renderedDetails(parsed.href) }
+      catch (error) {
+        if (challengeDetected) throw new Error(`SHEIN security verification is active. ${error instanceof Error?error.message:'The product browser failed'}`)
+        throw error
+      }
+    }
     title=details.title
     if (title) await db().sql`UPDATE products SET name=CASE WHEN approved=false THEN ${title} ELSE name END,description=COALESCE(description,${title}),updated_at=now() WHERE id=${productId}`
     if (!details.image) throw new Error('No product photo was found')
@@ -72,7 +78,7 @@ async function importShein(link:string) {
     photoId=prior.length?String(prior[0].id):await savePhoto(productId,jpg,null)
 
   } catch(error) {
-    warning=error instanceof Error && error.message.startsWith('SHEIN requires manual security verification') ? `Product saved. ${error.message}.` : `Product saved. ${error instanceof Error?error.message:'Details could not be downloaded'}. Review the details and upload a JPG in the product library.`
+    warning=`Product saved, but automatic extraction stopped: ${(error instanceof Error?error.message:'Details could not be downloaded').replace(/\.+$/,'')}. Retry when the cause is resolved.`
   }
   await log('product_imported',productId,warning || 'SHEIN product saved for owner review')
   return {productId,title,photoId,warning,reviewRequired:true,priceVerified:false,stockVerified:false}

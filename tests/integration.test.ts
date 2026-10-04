@@ -62,7 +62,7 @@ describe('database and external action boundaries',()=>{
       expect(state.store).toHaveBeenCalledTimes(1)
     } finally {network.mockRestore()}
   })
-  it('holds SHEIN security challenges for manual verification without starting a browser',async()=>{
+  it('tries a saved browser session when SHEIN redirects the static request to verification',async()=>{
     state.owner={id:'owner',email:'owner@example.com'}
     const challenge=new Response('security challenge')
     Object.defineProperty(challenge,'url',{value:'https://m.shein.com/risk/challenge?captcha_type=909'})
@@ -70,9 +70,23 @@ describe('database and external action boundaries',()=>{
     try {
       const response=await api(new Request('https://shop.test/api/app/import-shein',{method:'POST',body:JSON.stringify({url:'https://m.shein.com/Dress-p-483898098.html'})}))
       expect(response.status).toBe(200)
-      expect(await response.json()).toMatchObject({productId:'483898098',photoId:null,warning:expect.stringContaining('manual security verification')})
-      expect(state.render).not.toHaveBeenCalled()
+      expect(await response.json()).toMatchObject({productId:'483898098',photoId:null,warning:expect.stringContaining('security verification is active')})
+      expect(state.render).toHaveBeenCalledOnce()
       expect((await q("SELECT count(*)::int n FROM products WHERE id='483898098'")).rows[0].n).toBe(1)
+    } finally {network.mockRestore()}
+  })
+  it('continues automatic import when a verified browser session returns product details',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    state.render.mockResolvedValue({title:'Verified dress',image:'https://img.ltwebstatic.com/product.jpg'})
+    const challenge=new Response('security challenge')
+    Object.defineProperty(challenge,'url',{value:'https://m.shein.com/risk/challenge?captcha_type=909'})
+    const bytes=await sharp({create:{width:600,height:900,channels:3,background:'#737373'}}).jpeg().toBuffer()
+    const network=vi.spyOn(globalThis,'fetch').mockImplementation(async input=>String(input).includes('img.ltwebstatic.com')?new Response(Uint8Array.from(bytes)):challenge)
+    try {
+      const response=await api(new Request('https://shop.test/api/app/import-shein',{method:'POST',body:JSON.stringify({url:'https://m.shein.com/Dress-p-483898098.html'})}))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({productId:'483898098',title:'Verified dress',photoId:expect.any(String),warning:null})
+      expect(state.render).toHaveBeenCalledOnce()
     } finally {network.mockRestore()}
   })
   it('imports a new SHEIN product for review even if SHEIN blocks fetching, without duplicating or approving it',async()=>{
