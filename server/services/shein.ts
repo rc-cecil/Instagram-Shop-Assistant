@@ -38,9 +38,12 @@ export function staticDetails(html:string):SheinDetails {
 
 export async function renderedDetails(url:string):Promise<SheinDetails> {
   const {default:puppeteer}=await import('puppeteer-core')
-  const localChrome=process.env.CHROME_EXECUTABLE_PATH
+  const { existsSync } = await import('node:fs')
+  const localChrome=process.env.CHROME_EXECUTABLE_PATH || (process.platform === 'darwin' && existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome') ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '')
   const chromium=localChrome ? null : (await import('@sparticuz/chromium')).default
-  const browser=await puppeteer.launch({args:chromium?.args || [],executablePath:localChrome || await chromium!.executablePath(),headless:localChrome ? true : 'shell',defaultViewport:{width:430,height:900,isMobile:true}})
+  let browser
+  try { browser=await puppeteer.launch({args:chromium?.args || [],executablePath:localChrome || await chromium!.executablePath(),headless:localChrome ? true : 'shell',defaultViewport:{width:430,height:900,isMobile:true}}) }
+  catch { throw new Error('Local product browser could not start. Set CHROME_EXECUTABLE_PATH to a working Chrome binary, or upload a JPG manually.') }
   try {
     const page=await browser.newPage()
     await page.setRequestInterception(true)

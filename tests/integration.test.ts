@@ -62,6 +62,19 @@ describe('database and external action boundaries',()=>{
       expect(state.store).toHaveBeenCalledTimes(1)
     } finally {network.mockRestore()}
   })
+  it('holds SHEIN security challenges for manual verification without starting a browser',async()=>{
+    state.owner={id:'owner',email:'owner@example.com'}
+    const challenge=new Response('security challenge')
+    Object.defineProperty(challenge,'url',{value:'https://m.shein.com/risk/challenge?captcha_type=909'})
+    const network=vi.spyOn(globalThis,'fetch').mockResolvedValue(challenge)
+    try {
+      const response=await api(new Request('https://shop.test/api/app/import-shein',{method:'POST',body:JSON.stringify({url:'https://m.shein.com/Dress-p-483898098.html'})}))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({productId:'483898098',photoId:null,warning:expect.stringContaining('manual security verification')})
+      expect(state.render).not.toHaveBeenCalled()
+      expect((await q("SELECT count(*)::int n FROM products WHERE id='483898098'")).rows[0].n).toBe(1)
+    } finally {network.mockRestore()}
+  })
   it('imports a new SHEIN product for review even if SHEIN blocks fetching, without duplicating or approving it',async()=>{
     state.owner={id:'owner',email:'owner@example.com'}
     const network=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('captcha'))

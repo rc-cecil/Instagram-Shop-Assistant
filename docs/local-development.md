@@ -36,3 +36,5 @@ Set `CHROME_EXECUTABLE_PATH` to a locally installed Chrome or Chromium binary if
 The existing tests use a PostgreSQL compatible in-process engine and mocked external calls. The PGlite test mode does not prove connectivity to an external PostgreSQL server, Meta account, GonkaRouter account, or SHEIN login. Run those real checks only after their credentials and accounts are configured.
 
 The local test mode is for development only. For later hosting, set `DATABASE_URL` and leave `MIVELLE_TEST_MODE=false`; the backend then uses the normal PostgreSQL driver. The `dev:backend` script does not watch source files on systems with low file-watcher limits; restart `npm run dev` after backend code changes.
+
+If SHEIN redirects product requests to `/risk/challenge`, the importer saves the product record but pauses automatic image extraction. Complete SHEIN’s check manually in your browser, then use the product library’s JPG upload and review the product details yourself. The app does not bypass CAPTCHA or other security checks.
