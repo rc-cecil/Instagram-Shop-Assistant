@@ -1,11 +1,10 @@
-import type { Config } from '@netlify/functions'
-import { getStore } from '@netlify/blobs'
+import { storage } from '../storage'
 import sharp from 'sharp'
 import { ACCOUNT, PAYMENT_NUMBER, POST_TIMES, normalizeProductId, sellingPrice } from '../../shared/policy'
-import { db, recordUpdate, env, fail, graph, json, log, owner } from './_shared/server'
-import { assertUniquePhoto, inspectJpg } from './_shared/photos'
-import { staticDetails, renderedDetails } from './_shared/shein'
-import { postDue } from './_shared/posting'
+import { db, recordUpdate, env, fail, graph, json, log, owner } from '../services/server'
+import { assertUniquePhoto, inspectJpg } from '../services/photos'
+import { staticDetails, renderedDetails } from '../services/shein'
+import { postDue } from '../services/posting'
 
 const respond = (value:unknown) => json(value)
 async function body(req:Request) { try { return await req.json() } catch { throw new Error('Invalid JSON body') } }
@@ -33,7 +32,7 @@ async function savePhoto(productId:string, jpg:Buffer, sourceFileId:string|null)
   const data=await inspectJpg(jpg)
   await assertUniquePhoto(data.sha256,data.phash)
   const id=crypto.randomUUID(), blobKey=`photos/${id}.jpg`
-  await getStore({name:'product-images'}).set(blobKey,Uint8Array.from(jpg).buffer,{metadata:{contentType:'image/jpeg',sha256:data.sha256}})
+  await storage.put(blobKey, jpg)
   await db().sql`INSERT INTO photos(id,product_id,blob_key,source_file_id,sha256,phash,status,image_url) VALUES (${id},${productId},${blobKey},${sourceFileId},${data.sha256},${data.phash},'needs_review',${`/api/media/${id}`})`
   return id
 }
@@ -48,11 +47,21 @@ async function importShein(link:string) {
   let title:string|null=null,photoId:string|null=null,warning:string|null=null
   try {
     let details:{title:string|null;image:string|null}={title:null,image:null}
+    let challengeDetected=false
     try {
       const response=await fetch(sourceUrl,{headers:{'User-Agent':'Mozilla/5.0'},signal:AbortSignal.timeout(8000)})
-      if (response.ok) details=staticDetails(await response.text())
-    } catch { /* JavaScript rendering below is also used for unavailable static pages. */ }
-    if (!details.image) details=await renderedDetails(parsed.href)
+      challengeDetected=new URL(response.url).pathname.startsWith('/risk/challenge')
+      if (response.ok && !challengeDetected) details=staticDetails(await response.text())
+    } catch {
+      // JavaScript rendering below is also used for unavailable static pages.
+    }
+    if (!details.image) {
+      try { details=await renderedDetails(parsed.href) }
+      catch (error) {
+        if (challengeDetected) throw new Error(`SHEIN security verification is active. ${error instanceof Error?error.message:'The product browser failed'}`)
+        throw error
+      }
+    }
     title=details.title
     if (title) await db().sql`UPDATE products SET name=CASE WHEN approved=false THEN ${title} ELSE name END,description=COALESCE(description,${title}),updated_at=now() WHERE id=${productId}`
     if (!details.image) throw new Error('No product photo was found')
@@ -69,7 +78,7 @@ async function importShein(link:string) {
     photoId=prior.length?String(prior[0].id):await savePhoto(productId,jpg,null)
 
   } catch(error) {
-    warning=`Product saved. ${error instanceof Error?error.message:'Details could not be downloaded'}. Review the details and upload a JPG in the product library.`
+    warning=`Product saved, but automatic extraction stopped: ${(error instanceof Error?error.message:'Details could not be downloaded').replace(/\.+$/,'')}. Retry when the cause is resolved.`
   }
   await log('product_imported',productId,warning || 'SHEIN product saved for owner review')
   return {productId,title,photoId,warning,reviewRequired:true,priceVerified:false,stockVerified:false}
@@ -181,6 +190,7 @@ export default async function(req:Request) {
     if (path==='manual-reply') {
       const input=await body(req),id=String(input.conversationId||''),text=String(input.text||'').trim()
       if (!text || text.length>1000) return fail('Reply must be 1–1000 characters')
+      if (env('ENABLE_META_DM_SEND') !== 'true') return fail('Outgoing Meta DMs are disabled locally',403)
       const conversation=await db().sql`SELECT last_message_at FROM conversations WHERE id=${id}`
       if (!conversation.length) return fail('Conversation not found',404)
       if (!conversation[0].last_message_at || Date.now()-new Date(conversation[0].last_message_at).getTime()>24*3600000) return fail('Meta response window has expired')
@@ -237,4 +247,3 @@ export default async function(req:Request) {
     return fail('Not found',404)
   } catch(error) { return fail(error instanceof Error?error.message:'Unexpected error',500) }
 }
-export const config:Config={path:'/api/app/*'}

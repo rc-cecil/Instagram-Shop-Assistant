@@ -1,37 +1,14 @@
-import { getDatabase } from '@netlify/database'
-import { getUser } from '@netlify/identity'
+import { db } from '../database'
+import { verifySession, cookie } from '../auth'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
-export const db = () => getDatabase()
-export const env = (key: string) => Netlify.env.get(key) || ''
+export { db }
+export const env = (key: string) => process.env[key] || ''
 export const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } })
 export const fail = (message: string, status = 400) => json({ error: message }, status)
 
-function cookie(req: Request, name: string): string | null {
-  const raw = req.headers.get('cookie') || ''
-  for (const part of raw.split(';')) {
-    const [key, ...value] = part.trim().split('=')
-    if (key === name) return decodeURIComponent(value.join('='))
-  }
-  return null
-}
-
 export async function owner(req?: Request): Promise<{ id: string; email: string } | null> {
-  let user = await getUser()
-  // Netlify's request context can occasionally omit Identity even though the
-  // signed-in browser sent its nf_jwt cookie. Validate that token against this
-  // site's Identity endpoint before treating the request as authenticated.
-  if (!user && req) {
-    const authorization = req.headers.get('authorization') || ''
-    const jwt = authorization.startsWith('Bearer ') ? authorization.slice(7) : cookie(req, 'nf_jwt')
-    if (jwt) {
-      const identityUrl = new URL('/.netlify/identity/user', req.url)
-      const response = await fetch(identityUrl, { headers: { Authorization: `Bearer ${jwt}` } })
-      if (response.ok) user = await response.json()
-    }
-  }
-  const email = env('OWNER_EMAIL')
-  return user?.email && email && user.email.toLowerCase() === email.toLowerCase() ? { id: user.id, email: user.email } : null
+  return req ? verifySession(cookie(req, 'mivelle_session')) : null
 }
 export async function log(kind: string, entityId: string, detail: string) {
   await db().sql`INSERT INTO activity(id,kind,entity_id,detail) VALUES (${crypto.randomUUID()},${kind},${entityId},${detail})`
@@ -74,6 +51,8 @@ export async function igCredentials(): Promise<{ id: string; token: string } | n
 export async function graph(path: string, init: RequestInit = {}) {
   const creds = await igCredentials()
   if (!creds) throw new Error('Instagram connection is missing')
+  if (init.method === 'POST' && path.includes('media') && env('ENABLE_META_PUBLISHING') !== 'true') throw new Error('Meta publishing is disabled')
+  if (init.method === 'POST' && path.includes('messages') && env('ENABLE_META_DM_SEND') !== 'true') throw new Error('Meta DM sending is disabled')
   const response = await fetch(`https://graph.instagram.com/v24.0/${path.replace('{ig}', creds.id)}`, {
     ...init, headers: { Authorization: `Bearer ${creds.token}`, ...(init.headers || {}) }
   })

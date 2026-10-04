@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
 import { db } from './server'
-import { duplicatePhoto } from '../../../shared/policy'
+import { duplicatePhoto } from '../../shared/policy'
 
 export async function inspectJpg(bytes: Buffer) {
   const meta = await sharp(bytes).metadata()

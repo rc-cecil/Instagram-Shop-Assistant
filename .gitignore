@@ -1,10 +1,6 @@
 node_modules/
 dist/
-.netlify/
 .env
-.env.*
-!.env.example
-coverage/
+work/
+data/
 *.tsbuildinfo
-outputs/
-build_tracker.mjs

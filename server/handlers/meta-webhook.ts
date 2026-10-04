@@ -1,10 +1,8 @@
-import type { Config } from '@netlify/functions'
-import { db, env, eventId, fail, igCredentials, json, verifyMetaSignature } from './_shared/server'
-import { processPendingReplies } from './_shared/replies'
-import type { Context } from '@netlify/functions'
+import { db, env, eventId, fail, igCredentials, json, verifyMetaSignature } from '../services/server'
+import { processPendingReplies } from '../services/replies'
 
 type MetaEvent = { sender?: { id?: string }; recipient?: { id?: string }; timestamp?: number; message?: { mid?: string; text?: string; attachments?: { payload?: { url?: string } }[]; is_echo?: boolean } }
-export default async function(req: Request, context: Context) {
+export default async function(req: Request, context?: { waitUntil(promise: Promise<unknown>): void }) {
   if (req.method === 'GET') {
     const url = new URL(req.url)
     if (url.searchParams.get('hub.mode') === 'subscribe' && url.searchParams.get('hub.verify_token') === env('META_VERIFY_TOKEN'))
@@ -43,7 +41,7 @@ export default async function(req: Request, context: Context) {
       }
     }
   }
-  context.waitUntil(processPendingReplies(5))
+  const work = processPendingReplies(5).catch(error => console.error("Reply job failed", error))
+  if (context) context.waitUntil(work)
   return json({ received: true })
 }
-export const config: Config = { path: '/api/meta/webhook', method: ['GET','POST'] }

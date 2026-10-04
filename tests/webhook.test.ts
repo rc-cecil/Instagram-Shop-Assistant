@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { eventId, verifyMetaSignature } from '../netlify/functions/_shared/server'
+import { eventId, verifyMetaSignature } from '../server/services/server'
 
 describe('Meta webhook idempotency', () => {
   it('accepts only the exact signed payload', () => {
